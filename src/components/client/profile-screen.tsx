@@ -4,6 +4,7 @@
  * action calls the existing handler. Same account, several roles.
  */
 
+import { requestOpportunityFocus } from "@/lib/opportunities-focus";
 import { useState, type ReactNode } from "react";
 import {
   ArrowRight,
@@ -278,7 +279,7 @@ export function ProfileScreen({
                     void other;
                     return (
                       <li key={c.id}>
-                        <button type="button" className="pf-item" data-tone={st.tone} onClick={() => onNavigate("opportunities")}>
+                        <button type="button" className="pf-item" data-tone={st.tone} onClick={() => { requestOpportunityFocus({ listingId: c.listingId, offerId: c.acceptedOfferId, section: "contract" }); onNavigate("opportunities"); }}>
                           <span className="pf-item-icon"><BriefcaseBusiness strokeWidth={1.7} /></span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-bold text-foreground">{listingTitle(c.listingId)}</span>
