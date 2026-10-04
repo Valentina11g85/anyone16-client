@@ -133,7 +133,7 @@ function MediaPicker({
                 <FileText className="size-6" />
               </span>
             ) : (
-              <MediaThumb src={urls[i]} className="size-20 rounded-2xl object-cover" />
+              <MediaThumb src={urls[i] ?? null} className="size-20 rounded-2xl object-cover" />
             )}
             <button
               type="button"

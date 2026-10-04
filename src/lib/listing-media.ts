@@ -50,7 +50,7 @@ export async function uploadListingMedia(
     const path = `${opts.profileId}/${opts.listingId}/${opts.kind}/${crypto.randomUUID()}.${extFor(file)}`;
     const { error } = await foundation.storage
       .from(LISTING_MEDIA_BUCKET)
-      .upload(path, file, { contentType: file.type || undefined, upsert: false });
+      .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
     if (error) {
       const msg = error.message || "";
       if (/bucket not found/i.test(msg)) {
@@ -94,7 +94,7 @@ export function useListingMedia(refs: string[]): Array<string | null> {
       )
       .then(({ data }) => {
         (data ?? []).forEach((d, i) => {
-          if (d.signedUrl) cache.set(need[i], { url: d.signedUrl, exp: Date.now() + (SIGNED_TTL - 60) * 1000 });
+          if (d.signedUrl && need[i]) cache.set(need[i], { url: d.signedUrl, exp: Date.now() + (SIGNED_TTL - 60) * 1000 });
         });
         if (alive) setUrls(initial());
       });
