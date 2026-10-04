@@ -285,7 +285,7 @@ export function ServiceEditor({
               onChange={(e) => patch({ zone: e.target.value })}
             />
           </Field>
-          {draft.modality !== "remote" && (
+          {offering && draft.modality !== "remote" && (
             <Field label="Radio de servicio (km)">
               <Input
                 className={fieldClass}
@@ -327,42 +327,14 @@ export function ServiceEditor({
           {(["photos", "portfolio"] as const).map((key) => (
             <div key={key} className="sm:col-span-2">
               <Field label={key === "photos" ? "Fotografías" : "Portafolio / evidencias"}>
-                <div className="flex flex-wrap gap-3">
-                  {draft[key].map((src, i) => (
-                    <span key={i} className="relative">
-                      <img src={src} alt="" className="size-20 rounded-2xl object-cover" />
-                      <button
-                        type="button"
-                        aria-label="Quitar imagen"
-                        className="absolute -right-2 -top-2 grid size-6 place-items-center rounded-full bg-foreground text-background"
-                        onClick={() =>
-                          patch({
-                            [key]: draft[key].filter((_, j) => j !== i),
-                          } as Partial<ServiceListing>)
-                        }
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </span>
-                  ))}
-                  {draft[key].length < 4 && (
-                    <label className="grid size-20 cursor-pointer place-items-center rounded-2xl border border-dashed border-border bg-surface text-muted-foreground">
-                      <ImagePlus className="size-5" />
-                      <input
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="sr-only"
-                        onChange={async (e) => {
-                          const imgs = await readImages(e.target.files);
-                          patch({
-                            [key]: [...draft[key], ...imgs].slice(0, 4),
-                          } as Partial<ServiceListing>);
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
+                <MediaPicker
+                  kind={key}
+                  refs={draft[key]}
+                  profileId={draft.authorProfileId}
+                  listingId={draft.id}
+                  onChange={(next) => patch({ [key]: next } as Partial<ServiceListing>)}
+                  onBusy={(b) => setUploading((u) => ({ ...u, [key]: b }))}
+                />
               </Field>
             </div>
           ))}
