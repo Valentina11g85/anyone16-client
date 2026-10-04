@@ -308,3 +308,20 @@ export async function rateContract(contract: ServiceContract, rating: number, co
     return null;
   }
 }
+
+/**
+ * Review shown on a listing card: only reviews of THAT listing's contract, picked
+ * for the viewer (the listing author): the one they received first, else the one they wrote.
+ */
+export function cardReviewFor(s: OpportunitiesState, listing: ServiceListing) {
+  const viewer = listing.authorProfileId;
+  if (!viewer || listing.isDemo) return null;
+  const contract = contractForListing(s, listing.id);
+  if (!contract) return null;
+  const forContract = s.reviews.filter((r) => r.contractId === contract.id);
+  const received = forContract.find((r) => r.reviewedProfileId === viewer);
+  if (received) return { label: "Calificación recibida", rating: received.rating };
+  const written = forContract.find((r) => r.reviewerProfileId === viewer);
+  if (written) return { label: "Tu calificación", rating: written.rating };
+  return null;
+}

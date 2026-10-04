@@ -56,7 +56,7 @@ import {
   contractForListing,
   myReviewFor,
   rateContract,
-  reviewsFor,
+  cardReviewFor,
   setContractStatus,
   feedListings,
   offersForListing,
