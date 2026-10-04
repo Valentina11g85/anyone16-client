@@ -47,7 +47,7 @@ import { PaymentsHistory } from "@/components/payments/payments-history";
 import { AdminPaymentSummary, MyEarnings, MyPayments } from "@/components/payments/my-payments";
 import { UnifiedHistory } from "@/components/history/unified-history";
 import { TrustSafetyCenter } from "@/components/trust/trust-safety-center";
-import { useOpportunities } from "@/lib/opportunities-store";
+import { reviewsFor, useOpportunities } from "@/lib/opportunities-store";
 import type { ContractStatus } from "@/lib/opportunities-model";
 import { formatPaymentMoney } from "@/lib/payment-model";
 import { trustForWorker, useTrust } from "@/lib/trust-store";
