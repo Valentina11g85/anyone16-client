@@ -100,6 +100,29 @@ export function OpportunitiesScreen({
   const [editing, setEditing] = useState<ServiceListing | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [preset, setPreset] = useState<Discover & { nonce: number }>({ nonce: 0 });
+  const focus = useOpportunityFocus();
+  const [focusSection, setFocusSection] = useState<FocusSection | null>(null);
+  const [focusMissing, setFocusMissing] = useState(false);
+
+  // Notification deep link: resolve its IDs against RLS-filtered data only.
+  useEffect(() => {
+    if (!focus) return;
+    const viaOffer = focus.offerId
+      ? opportunities.offers.find((o) => o.id === focus.offerId)?.listingId
+      : undefined;
+    const listingId = focus.listingId ?? viaOffer ?? null;
+    const found = listingId ? opportunities.listings.find((l) => l.id === listingId) : undefined;
+    if (found) {
+      setEditing(null);
+      setFocusMissing(false);
+      setFocusSection(focus.section);
+      setOpenId(found.id);
+      clearOpportunityFocus();
+    } else if (!opportunities.loading) {
+      setFocusMissing(true);
+      clearOpportunityFocus();
+    }
+  }, [focus, opportunities.listings, opportunities.offers, opportunities.loading]);
 
   const providerFor = (listing: ServiceListing): WorkerProfile | null =>
     (listing.authorProfileId &&
@@ -171,6 +194,11 @@ export function OpportunitiesScreen({
         ))}
       </nav>
 
+      {focusMissing && (
+        <p className="mt-4 rounded-2xl bg-muted px-4 py-3 text-xs text-muted-foreground">
+          Esta notificación hace referencia a un elemento que ya no está disponible para tu cuenta.
+        </p>
+      )}
       {opportunities.error && (
         <p className="mt-4 rounded-2xl bg-destructive/10 px-4 py-3 text-xs text-destructive">
           {opportunities.error}
@@ -248,7 +276,11 @@ export function OpportunitiesScreen({
           state={opportunities}
           myProfileId={myProfileId}
           myName={worker?.displayName || profile?.fullName || "Usuario AnyOne"}
-          onClose={() => setOpenId(null)}
+          focusSection={focusSection}
+          onClose={() => {
+            setOpenId(null);
+            setFocusSection(null);
+          }}
         />
       )}
     </section>
@@ -530,6 +562,7 @@ function ListingDetail({
   state,
   myProfileId,
   myName,
+  focusSection,
   onClose,
 }: {
   listing: ServiceListing;
@@ -538,8 +571,18 @@ function ListingDetail({
   state: OpportunitiesState;
   myProfileId: string | null;
   myName: string;
+  focusSection?: FocusSection | null;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    if (!focusSection || focusSection === "listing") return;
+    const t = setTimeout(() => {
+      document
+        .getElementById(`opd-${focusSection}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [focusSection, listing.id]);
   const isAuthor = Boolean(myProfileId) && listing.authorProfileId === myProfileId;
   const offers = offersForListing(state, listing.id);
   const accepted = offers.find((o) => o.status === "ACCEPTED") ?? null;
@@ -552,8 +595,11 @@ function ListingDetail({
   const cat = categoryByCode(listing.categoryCode);
   const [notice, setNotice] = useState<string | null>(null);
   const contract = listing.isDemo ? null : contractForListing(state, listing.id);
-  const serviceReviews = listing.isDemo ? [] : reviewsFor(state, listing.authorProfileId);
-  const serviceRep = listing.authorProfileId ? state.reputation[listing.authorProfileId] : undefined;
+  // Reviews belong to the professional: the author of an offer, or the hired provider of a request.
+  const reviewedPro =
+    listing.intent === "OFFER" ? listing.authorProfileId : (contract?.providerProfileId ?? null);
+  const serviceReviews = listing.isDemo ? [] : reviewsFor(state, reviewedPro);
+  const serviceRep = reviewedPro ? state.reputation[reviewedPro] : undefined;
   const party = [...offers].reverse().find((o) => o.buyerProfileId && o.providerProfileId);
   const isParticipant =
     Boolean(myProfileId) &&
@@ -614,16 +660,11 @@ function ListingDetail({
         </SheetHeader>
         <div className="mt-4 space-y-5 pb-8">
           {listing.photos.length > 0 && (
-            <div className="examples-scroller flex gap-2">
-              {listing.photos.map((src, i) => (
-                <img
-                  key={i}
-                  src={src}
-                  alt=""
-                  className="h-40 w-64 shrink-0 rounded-2xl object-cover"
-                />
-              ))}
-            </div>
+            <MediaList
+              refs={listing.photos}
+              className="examples-scroller flex gap-2"
+              itemClassName="h-40 w-64 shrink-0 rounded-2xl object-cover"
+            />
           )}
           <div className="flex items-center gap-3">
             <span className="grid size-12 place-items-center rounded-2xl bg-brand-soft font-display font-extrabold text-primary">
@@ -681,11 +722,11 @@ function ListingDetail({
           {listing.portfolio.length > 0 && (
             <div>
               <h3 className="font-display font-bold text-foreground">Portafolio</h3>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {listing.portfolio.map((src, i) => (
-                  <img key={i} src={src} alt="" className="aspect-square rounded-xl object-cover" />
-                ))}
-              </div>
+              <MediaList
+                refs={listing.portfolio}
+                className="mt-2 grid grid-cols-3 gap-2"
+                itemClassName="aspect-square w-full rounded-xl object-cover"
+              />
             </div>
           )}
           <div>
@@ -711,7 +752,7 @@ function ListingDetail({
                   </li>
                 ))}
               </ul>
-            ) : reviews.length === 0 ? (
+            ) : reviews.length === 0 || listing.intent !== "OFFER" ? (
               <p className="mt-1 text-sm text-muted-foreground">Aún no hay reseñas.</p>
             ) : (
               <ul className="mt-2 space-y-2">
@@ -728,7 +769,7 @@ function ListingDetail({
           </div>
 
           {offers.length > 0 && (
-            <div>
+            <div id="opd-negotiation" className="scroll-mt-4">
               <h3 className="font-display font-bold text-foreground">Negociación</h3>
               <ul className="mt-2 space-y-2">
                 {offers.map((o) => (
@@ -784,7 +825,7 @@ function ListingDetail({
               Esta es una publicación de ejemplo; no se puede contratar.
             </p>
           ) : accepted ? (
-            <div className="space-y-3 rounded-2xl bg-success/15 p-4 text-sm">
+            <div id="opd-contract" className="scroll-mt-4 space-y-3 rounded-2xl bg-success/15 p-4 text-sm">
               <p className="font-semibold text-success">
                 Precio acordado: {formatMoney(accepted.amount, accepted.currencyCode)}.
               </p>
@@ -813,8 +854,11 @@ function ListingDetail({
                     />
                   )}
                   {isParticipant && contract.status === "completed" && myProfileId && (
-                    <ReviewPanel state={state} contract={contract} myProfileId={myProfileId} />
+                    <div id="opd-review" className="scroll-mt-4">
+                      <ReviewPanel state={state} contract={contract} myProfileId={myProfileId} />
+                    </div>
                   )}
+                  {isParticipant && <ContractReviews state={state} contract={contract} />}
                 </>
               )}
             </div>
@@ -901,11 +945,13 @@ function ListingDetail({
             </div>
           )}
           {!listing.isDemo && isParticipant && counterpartId && myProfileId && (
+            <div id="opd-chat" className="scroll-mt-4">
             <ServiceChat
               listingId={listing.id}
               myProfileId={myProfileId}
               counterpartId={counterpartId}
             />
+            </div>
           )}
         </div>
       </SheetContent>
@@ -1081,6 +1127,32 @@ function ReviewPanel({
           </p>
           {received.comment && <p className="text-muted-foreground">{received.comment}</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Oportunidades reviews tied to this exact contract (never Favores reviews). */
+function ContractReviews({ state, contract }: { state: OpportunitiesState; contract: ServiceContract }) {
+  const list = state.reviews.filter((r) => r.contractId === contract.id);
+  const ofPro = list.find((r) => r.reviewedProfileId === contract.providerProfileId);
+  return (
+    <div className="space-y-2 rounded-2xl bg-card p-4">
+      <p className="font-display font-bold text-foreground">Reseña del profesional contratado</p>
+      {ofPro ? (
+        <div>
+          <Stars value={ofPro.rating} />
+          <p className="text-xs text-muted-foreground">
+            {ofPro.reviewerName} · {new Date(ofPro.createdAt).toLocaleDateString("es-CO")}
+          </p>
+          {ofPro.comment && <p className="text-muted-foreground">{ofPro.comment}</p>}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {contract.status === "completed"
+            ? "Esta contratación todavía no tiene reseña."
+            : "La reseña estará disponible cuando el servicio se complete."}
+        </p>
       )}
     </div>
   );
