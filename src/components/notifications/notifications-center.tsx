@@ -290,9 +290,10 @@ function toneOf(type: string, fam: Family) {
 
 function actionLabel(n: AppNotification): string | null {
   if (n.relatedPaymentOrderId) return "Ver pago";
-  if (n.relatedServiceOfferId) return "Ver propuesta";
-  if (n.type.startsWith("service_contract")) return "Ver contratación";
+  if (n.type.startsWith("service_contract") || n.type === "service_offer_accepted") return "Ver contratación";
   if (n.type.startsWith("service_review")) return "Ver calificación";
+  if (n.type.startsWith("service_message")) return "Abrir chat";
+  if (n.relatedServiceOfferId) return "Ver propuesta completa";
   if (n.relatedServiceListingId || n.type.startsWith("service")) return "Ver servicio";
   if (n.relatedFavorId || n.relatedOfferId) return "Ver favor";
   return null;
