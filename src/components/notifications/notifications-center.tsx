@@ -32,6 +32,7 @@ import {
   type AppNotification,
 } from "@/lib/notifications-store";
 import { subscribeLive } from "@/lib/realtime";
+import { requestOpportunityFocus, sectionForType } from "@/lib/opportunities-focus";
 import { getPaymentState, refreshPayments, usePayments } from "@/lib/payment-store";
 
 export type NotificationTarget = "favors" | "opportunities" | "worker-offers";
@@ -55,15 +56,26 @@ export function useNotificationsSync() {
 }
 
 export function BellButton({ unread, onClick }: { unread: number; onClick: () => void }) {
+  // The badge lives outside the button: buttons clip their overflow for the sheen effect.
   return (
-    <Button aria-label="Notificaciones" variant="soft" size="iconLg" className="relative" onClick={onClick}>
-      <Bell />
+    <span className="relative inline-flex">
+      <Button
+        aria-label={unread > 0 ? `Notificaciones, ${unread} sin leer` : "Notificaciones"}
+        variant="soft"
+        size="iconLg"
+        onClick={onClick}
+      >
+        <Bell />
+      </Button>
       {unread > 0 && (
-        <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-bold leading-5 text-destructive-foreground">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-1.5 -top-1.5 z-10 min-w-5 rounded-full bg-destructive px-1.5 text-center text-[11px] font-bold leading-5 text-destructive-foreground shadow-sm ring-2 ring-background"
+        >
           {unread > 99 ? "99+" : unread}
         </span>
       )}
-    </Button>
+    </span>
   );
 }
 
@@ -108,6 +120,12 @@ export function NotificationsCenter({
       return;
     }
     if (n.relatedServiceListingId || n.relatedServiceOfferId || n.type.startsWith("service")) {
+      // Open the exact listing/negotiation/contract the notification refers to.
+      requestOpportunityFocus({
+        listingId: n.relatedServiceListingId,
+        offerId: n.relatedServiceOfferId,
+        section: sectionForType(n.type),
+      });
       onOpenChange(false);
       onNavigate("opportunities");
       return;
