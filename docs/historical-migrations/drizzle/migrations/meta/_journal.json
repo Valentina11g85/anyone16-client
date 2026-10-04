@@ -1,0 +1,125 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789932618393,
+      "tag": "0000_anyone_stage4_core_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789932697897,
+      "tag": "0001_extend_favor_status_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789933479790,
+      "tag": "0002_real_accounts_and_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789934553754,
+      "tag": "0003_stage6_locations_and_geo",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789938125743,
+      "tag": "0004_locations_owner_can_write",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789938345716,
+      "tag": "0005_locations_select_owner",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789939228074,
+      "tag": "0006_stage7_payments_architecture",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789940348118,
+      "tag": "0007_stage8_enum_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789940477437,
+      "tag": "0008_stage8_trust_and_safety",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789941652489,
+      "tag": "0009_verification_states_hardening_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789941746483,
+      "tag": "0010_verification_provider_enforcement",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789941809218,
+      "tag": "0011_verification_guard_field_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789942677052,
+      "tag": "0012_security_remediation_core_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789942759120,
+      "tag": "0013_security_remediation_financial_server_side",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789942983210,
+      "tag": "0014_fix_guard_triggers_privilege_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789943858485,
+      "tag": "0015_final_pre_worker_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789943976559,
+      "tag": "0016_revoke_anon_rate_limit_tables",
+      "breakpoints": true
+    }
+  ]
+}
