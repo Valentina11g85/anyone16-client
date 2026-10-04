@@ -9,6 +9,7 @@ import {
   formatListingPrice,
   type ServiceListing,
 } from "@/lib/opportunities-model";
+import { useFirstPhoto } from "./listing-media";
 
 /** Real trust data only comes from the author's existing AnyOne¹⁶ worker profile. */
 export function ListingCard({
@@ -21,7 +22,8 @@ export function ListingCard({
   onOpen?: () => void;
 }) {
   const offering = listing.intent === "OFFER";
-  const photo = listing.photos[0] ?? listing.authorPhotoUrl;
+  const firstPhoto = useFirstPhoto(listing.photos);
+  const photo = firstPhoto ?? (listing.photos.length ? null : listing.authorPhotoUrl);
   const Wrapper = onOpen ? "button" : "div";
   return (
     <Wrapper
