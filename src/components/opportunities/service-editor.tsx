@@ -433,7 +433,7 @@ export function ServiceEditor({
             <Button
               size="touch"
               className="flex-1"
-              disabled={missing.length > 0}
+              disabled={missing.length > 0 || isUploading}
               onClick={() => setStep("review")}
             >
               Revisar publicación
@@ -441,7 +441,7 @@ export function ServiceEditor({
             <Button
               size="touch"
               variant="outline"
-              disabled={saving || !draft.title.trim()}
+              disabled={saving || isUploading || !draft.title.trim()}
               onClick={() => persist(draft.status === "INACTIVE" ? "INACTIVE" : "DRAFT")}
             >
               Guardar borrador
@@ -470,7 +470,7 @@ export function ServiceEditor({
                   .map((c) => languages.find((l) => l.code === c)?.name ?? c)
                   .join(", ") || "—",
               ],
-              ["Radio", draft.radiusKm ? `${draft.radiusKm} km` : "—"],
+              ...(offering ? [["Radio", draft.radiusKm ? `${draft.radiusKm} km` : "—"]] : []),
             ].map(([k, v]) => (
               <div key={k}>
                 <dt className="text-muted-foreground">{k}</dt>
@@ -500,7 +500,7 @@ export function ServiceEditor({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction disabled={saving} onClick={() => persist("ACTIVE")}>
+            <AlertDialogAction disabled={saving || isUploading} onClick={() => persist("ACTIVE")}>
               Publicar
             </AlertDialogAction>
           </AlertDialogFooter>
