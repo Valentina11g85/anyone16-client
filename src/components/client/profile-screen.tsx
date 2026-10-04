@@ -303,6 +303,32 @@ export function ProfileScreen({
         </div>
       </div>
 
+      {/* Reseñas recibidas (Oportunidades): reviewed_profile_id = este perfil */}
+      <div className="mt-10">
+        <SectionHead id="pf-reviews" icon={Star} kicker="Oportunidades" title="Reseñas" />
+        {(() => {
+          const received = reviewsFor(opps, profile.id);
+          return received.length === 0 ? (
+            <div className="pf-empty mt-4"><p>Aún no has recibido reseñas en Oportunidades.</p></div>
+          ) : (
+            <ul className="mt-4 space-y-2.5">
+              {received.slice(0, 20).map((r) => (
+                <li key={r.id} className="pf-mini">
+                  <p className="font-bold text-foreground">
+                    {r.reviewerName} · {"★".repeat(r.rating)}
+                    <span className="ml-2 text-xs font-semibold text-muted-foreground">
+                      {r.reviewerRole === "buyer" ? "como proveedor" : "como contratante"}
+                    </span>
+                  </p>
+                  {r.comment && <p className="text-sm text-muted-foreground">{r.comment}</p>}
+                  <p className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleDateString("es-CO")}</p>
+                </li>
+              ))}
+            </ul>
+          );
+        })()}
+      </div>
+
       {/* Historial */}
       <div className="mt-10">
         <SectionHead id="pf-history" icon={History} kicker="Tu actividad" title="Historial" />
