@@ -66,6 +66,12 @@ import {
   useOpportunities,
   type OpportunitiesState,
 } from "@/lib/opportunities-store";
+import { MediaList } from "./listing-media";
+import {
+  clearOpportunityFocus,
+  useOpportunityFocus,
+  type FocusSection,
+} from "@/lib/opportunities-focus";
 import { ListingCard } from "./listing-card";
 import { sceneVariant, serviceArt, tiltHandlers } from "@/lib/scene-art";
 import { ServiceEditor } from "./service-editor";
