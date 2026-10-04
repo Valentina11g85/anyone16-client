@@ -108,11 +108,23 @@ function start() {
   // Live offers/counteroffers, contracts and listings; 30 s poll only if realtime is down.
   subscribeLive({
     name: "opportunities-live",
-    tables: [{ table: "service_offers" }, { table: "service_contracts" }, { table: "service_listings" }],
+    // notifications: every contract transition / review notifies the other party, so it
+    // also refreshes them when service_contracts events don't reach this client.
+    tables: [
+      { table: "service_offers" },
+      { table: "service_contracts" },
+      { table: "service_listings" },
+      { table: "service_reviews" },
+      { table: "notifications" },
+    ],
     onChange: () => void reload(),
     fallbackMs: 30000,
     debounceMs: 400,
   });
+  // Coming back to the app always re-reads the real state from Foundation.
+  const onVisible = () => document.visibilityState === "visible" && void reload();
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("focus", onVisible);
 }
 
 export function useOpportunities() {
@@ -265,6 +277,7 @@ export async function setContractStatus(
   try {
     const next = await updateContractStatus(contract.id, status, reason);
     set((s) => ({ ...s, error: null, contracts: s.contracts.map((c) => (c.id === next.id ? next : c)) }));
+    void reload();
     return next;
   } catch (e) {
     reportError("No se pudo actualizar la contratación", e);
