@@ -47,7 +47,7 @@ import { PaymentsHistory } from "@/components/payments/payments-history";
 import { AdminPaymentSummary, MyEarnings, MyPayments } from "@/components/payments/my-payments";
 import { UnifiedHistory } from "@/components/history/unified-history";
 import { TrustSafetyCenter } from "@/components/trust/trust-safety-center";
-import { useOpportunities } from "@/lib/opportunities-store";
+import { reviewsFor, useOpportunities } from "@/lib/opportunities-store";
 import type { ContractStatus } from "@/lib/opportunities-model";
 import { formatPaymentMoney } from "@/lib/payment-model";
 import { trustForWorker, useTrust } from "@/lib/trust-store";
@@ -301,6 +301,32 @@ export function ProfileScreen({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Reseñas recibidas (Oportunidades): reviewed_profile_id = este perfil */}
+      <div className="mt-10">
+        <SectionHead id="pf-reviews" icon={Star} kicker="Oportunidades" title="Reseñas" />
+        {(() => {
+          const received = reviewsFor(opps, profile.id);
+          return received.length === 0 ? (
+            <div className="pf-empty mt-4"><p>Aún no has recibido reseñas en Oportunidades.</p></div>
+          ) : (
+            <ul className="mt-4 space-y-2.5">
+              {received.slice(0, 20).map((r) => (
+                <li key={r.id} className="pf-mini">
+                  <p className="font-bold text-foreground">
+                    {r.reviewerName} · {"★".repeat(r.rating)}
+                    <span className="ml-2 text-xs font-semibold text-muted-foreground">
+                      {r.reviewerRole === "buyer" ? "como proveedor" : "como contratante"}
+                    </span>
+                  </p>
+                  {r.comment && <p className="text-sm text-muted-foreground">{r.comment}</p>}
+                  <p className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleDateString("es-CO")}</p>
+                </li>
+              ))}
+            </ul>
+          );
+        })()}
       </div>
 
       {/* Historial */}

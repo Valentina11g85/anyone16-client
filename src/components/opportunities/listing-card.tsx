@@ -11,14 +11,19 @@ import {
 } from "@/lib/opportunities-model";
 import { useFirstPhoto } from "./listing-media";
 
+export type CardReview = { label: string; rating: number } | null;
+
 /** Real trust data only comes from the author's existing AnyOne¹⁶ worker profile. */
 export function ListingCard({
   listing,
   provider,
+  contractReview,
   onOpen,
 }: {
   listing: ServiceListing;
   provider?: WorkerProfile | null;
+  /** When given (even null), the card shows the review of ITS contract instead of author stats. */
+  contractReview?: CardReview;
   onOpen?: () => void;
 }) {
   const offering = listing.intent === "OFFER";
@@ -85,7 +90,16 @@ export function ListingCard({
             {listing.radiusKm && listing.modality !== "remote" ? ` · ${listing.radiusKm} km` : ""}
           </span>
           <span>{AVAILABILITY_LABELS[listing.availabilityType]}</span>
-          {provider && provider.rating.count > 0 ? (
+          {contractReview !== undefined ? (
+            contractReview ? (
+              <span className="inline-flex items-center gap-1">
+                <Star className="size-3.5 fill-current text-primary" />
+                {contractReview.label} · {contractReview.rating}★
+              </span>
+            ) : (
+              <span>Sin reseñas aún</span>
+            )
+          ) : provider && provider.rating.count > 0 ? (
             <span className="inline-flex items-center gap-1">
               <Star className="size-3.5 fill-current text-primary" />
               {provider.rating.average.toFixed(1)} · {provider.rating.completedFavors} trabajos

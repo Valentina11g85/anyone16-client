@@ -56,7 +56,7 @@ import {
   contractForListing,
   myReviewFor,
   rateContract,
-  reviewsFor,
+  cardReviewFor,
   setContractStatus,
   feedListings,
   offersForListing,
@@ -275,10 +275,6 @@ export function OpportunitiesScreen({
         <ListingDetail
           listing={open}
           provider={providerFor(open)}
-          reviews={(() => {
-            const p = providerFor(open);
-            return p ? (marketplace.reviews[p.id] ?? []) : [];
-          })()}
           state={opportunities}
           myProfileId={myProfileId}
           myName={worker?.displayName || profile?.fullName || "Usuario AnyOne"}
@@ -347,7 +343,11 @@ function OfferSide({
             ).length;
             return (
               <div key={listing.id} className="space-y-2">
-                <ListingCard listing={listing} onOpen={() => onOpen(listing.id)} />
+                <ListingCard
+                  listing={listing}
+                  contractReview={cardReviewFor(state, listing)}
+                  onOpen={() => onOpen(listing.id)}
+                />
                 <div className="flex flex-wrap items-center gap-2 px-1 text-xs">
                   <span className="rounded-full bg-surface px-2.5 py-1 font-bold text-muted-foreground">
                     {listing.status === "ACTIVE"
@@ -564,7 +564,6 @@ function FilterSelect<T extends string>({
 function ListingDetail({
   listing,
   provider,
-  reviews,
   state,
   myProfileId,
   myName,
@@ -573,7 +572,6 @@ function ListingDetail({
 }: {
   listing: ServiceListing;
   provider: WorkerProfile | null;
-  reviews: Array<{ id: string; author: string; rating: number; body: string }>;
   state: OpportunitiesState;
   myProfileId: string | null;
   myName: string;
@@ -601,11 +599,7 @@ function ListingDetail({
   const cat = categoryByCode(listing.categoryCode);
   const [notice, setNotice] = useState<string | null>(null);
   const contract = listing.isDemo ? null : contractForListing(state, listing.id);
-  // Reviews belong to the professional: the author of an offer, or the hired provider of a request.
-  const reviewedPro =
-    listing.intent === "OFFER" ? listing.authorProfileId : (contract?.providerProfileId ?? null);
-  const serviceReviews = listing.isDemo ? [] : reviewsFor(state, reviewedPro);
-  const serviceRep = reviewedPro ? state.reputation[reviewedPro] : undefined;
+  // General reviews/reputation belong to the person's profile, not to a listing detail.
   const party = [...offers].reverse().find((o) => o.buyerProfileId && o.providerProfileId);
   const isParticipant =
     Boolean(myProfileId) &&
@@ -735,44 +729,6 @@ function ListingDetail({
               />
             </div>
           )}
-          <div>
-            <h3 className="font-display font-bold text-foreground">Reseñas</h3>
-            {serviceRep && serviceRep.count > 0 && (
-              <p className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-foreground">
-                <Star className="size-4 fill-current text-primary" />
-                {serviceRep.average.toFixed(1)} · {serviceRep.count} reseña
-                {serviceRep.count > 1 ? "s" : ""} en Oportunidades
-              </p>
-            )}
-            {serviceReviews.length > 0 ? (
-              <ul className="mt-2 space-y-2">
-                {serviceReviews.slice(0, 10).map((r) => (
-                  <li key={r.id} className="rounded-2xl bg-surface p-3 text-sm">
-                    <p className="font-semibold">
-                      {r.reviewerName} · {"★".repeat(r.rating)}
-                    </p>
-                    {r.comment && <p className="text-muted-foreground">{r.comment}</p>}
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(r.createdAt).toLocaleDateString("es-CO")}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            ) : reviews.length === 0 || listing.intent !== "OFFER" ? (
-              <p className="mt-1 text-sm text-muted-foreground">Aún no hay reseñas.</p>
-            ) : (
-              <ul className="mt-2 space-y-2">
-                {reviews.slice(0, 5).map((r) => (
-                  <li key={r.id} className="rounded-2xl bg-surface p-3 text-sm">
-                    <p className="font-semibold">
-                      {r.author} · {r.rating}★
-                    </p>
-                    <p className="text-muted-foreground">{r.body}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
 
           {offers.length > 0 && (
             <div id="opd-negotiation" className="scroll-mt-4">
@@ -856,6 +812,7 @@ function ListingDetail({
                   {isParticipant && (
                     <ContractActions
                       contract={contract}
+                      myProfileId={myProfileId}
                       onMove={moveContract}
                     />
                   )}
@@ -864,7 +821,6 @@ function ListingDetail({
                       <ReviewPanel state={state} contract={contract} myProfileId={myProfileId} />
                     </div>
                   )}
-                  {isParticipant && <ContractReviews state={state} contract={contract} />}
                 </>
               )}
             </div>
@@ -984,18 +940,38 @@ const NEXT_LABEL: Partial<Record<ContractStatus, string>> = {
   confirmed: "Iniciar servicio",
   in_progress: "Marcar completado",
 };
+/** Who may advance each step (mirrored server-side in transition_service_contract). */
+const NEXT_ACTOR: Partial<Record<ContractStatus, "buyer" | "provider" | "any">> = {
+  agreed: "buyer",
+  confirmed: "provider",
+  in_progress: "any",
+};
+const WAITING_LABEL: Partial<Record<ContractStatus, string>> = {
+  agreed: "Esperando que el contratante confirme la contratación.",
+  confirmed: "Contratación confirmada. El profesional iniciará el servicio.",
+};
 
 function ContractActions({
   contract,
+  myProfileId,
   onMove,
 }: {
   contract: ServiceContract;
+  myProfileId: string | null;
   onMove: (status: ContractStatus, reason?: string) => Promise<boolean>;
 }) {
   const [confirming, setConfirming] = useState<"cancelled" | "disputed" | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const open = !["completed", "cancelled", "disputed"].includes(contract.status);
+  const myRole =
+    myProfileId === contract.buyerProfileId
+      ? "buyer"
+      : myProfileId === contract.providerProfileId
+        ? "provider"
+        : null;
+  const actor = NEXT_ACTOR[contract.status];
+  const canAdvance = Boolean(myRole) && (actor === "any" || actor === myRole);
   const run = async (status: ContractStatus, why?: string) => {
     setBusy(true);
     const ok = await onMove(status, why);
@@ -1039,8 +1015,12 @@ function ContractActions({
     );
   }
   return (
+    <div className="space-y-2">
+      {NEXT_STATUS[contract.status] && !canAdvance && WAITING_LABEL[contract.status] && (
+        <p className="text-sm text-muted-foreground">{WAITING_LABEL[contract.status]}</p>
+      )}
     <div className="flex flex-wrap gap-2">
-      {NEXT_STATUS[contract.status] && (
+      {NEXT_STATUS[contract.status] && canAdvance && (
         <Button disabled={busy} onClick={() => void run(NEXT_STATUS[contract.status]!)}>
           {NEXT_LABEL[contract.status]}
         </Button>
@@ -1051,6 +1031,7 @@ function ContractActions({
       <Button variant="outline" disabled={busy} onClick={() => setConfirming("disputed")}>
         Abrir disputa
       </Button>
+    </div>
     </div>
   );
 }
@@ -1075,6 +1056,11 @@ function Stars({ value, onChange }: { value: number; onChange?: (n: number) => v
   );
 }
 
+/**
+ * The only place a contract's reviews render (one copy each):
+ * "Tu calificación" = reviewer is me; "Calificación recibida" = reviewed is me.
+ * The target is decided by Foundation (submit_service_review) from service_contracts.
+ */
 function ReviewPanel({
   state,
   contract,
@@ -1088,6 +1074,7 @@ function ReviewPanel({
   const received = state.reviews.find(
     (r) => r.contractId === contract.id && r.reviewedProfileId === myProfileId,
   );
+  const iAmProvider = contract.providerProfileId === myProfileId;
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1103,14 +1090,18 @@ function ReviewPanel({
     <div className="space-y-3 rounded-2xl bg-card p-4">
       {mine ? (
         <div>
-          <p className="font-semibold text-foreground">Tu calificación</p>
+          <p className="font-semibold text-foreground">
+            {iAmProvider ? "Tu calificación al contratante" : "Tu calificación al profesional"}
+          </p>
           <Stars value={mine.rating} />
           {mine.comment && <p className="text-muted-foreground">{mine.comment}</p>}
           {done && <p className="text-xs font-bold text-success">¡Gracias! Calificación guardada.</p>}
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="font-display font-bold text-foreground">Calificar servicio</p>
+          <p className="font-display font-bold text-foreground">
+            {iAmProvider ? "Calificar al contratante" : "Calificar al profesional"}
+          </p>
           <Stars value={rating} onChange={setRating} />
           <Textarea
             className="rounded-2xl bg-surface"
@@ -1133,32 +1124,6 @@ function ReviewPanel({
           </p>
           {received.comment && <p className="text-muted-foreground">{received.comment}</p>}
         </div>
-      )}
-    </div>
-  );
-}
-
-/** Oportunidades reviews tied to this exact contract (never Favores reviews). */
-function ContractReviews({ state, contract }: { state: OpportunitiesState; contract: ServiceContract }) {
-  const list = state.reviews.filter((r) => r.contractId === contract.id);
-  const ofPro = list.find((r) => r.reviewedProfileId === contract.providerProfileId);
-  return (
-    <div className="space-y-2 rounded-2xl bg-card p-4">
-      <p className="font-display font-bold text-foreground">Reseña del profesional contratado</p>
-      {ofPro ? (
-        <div>
-          <Stars value={ofPro.rating} />
-          <p className="text-xs text-muted-foreground">
-            {ofPro.reviewerName} · {new Date(ofPro.createdAt).toLocaleDateString("es-CO")}
-          </p>
-          {ofPro.comment && <p className="text-muted-foreground">{ofPro.comment}</p>}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          {contract.status === "completed"
-            ? "Esta contratación todavía no tiene reseña."
-            : "La reseña estará disponible cuando el servicio se complete."}
-        </p>
       )}
     </div>
   );
