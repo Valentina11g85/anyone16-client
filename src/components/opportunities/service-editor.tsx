@@ -1,7 +1,17 @@
 /** Oportunidades — create → review → confirm → publish (never auto-publishes). */
 
 import { useState } from "react";
-import { ArrowLeft, Check, ImagePlus, X } from "lucide-react";
+import { ArrowLeft, Check, FileText, ImagePlus, Loader2, X } from "lucide-react";
+
+import {
+  acceptFor,
+  isPdfRef,
+  removeListingMedia,
+  uploadListingMedia,
+  useListingMedia,
+  type MediaKind,
+} from "@/lib/listing-media";
+import { MediaThumb } from "./listing-media";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,20 +89,83 @@ function Pick<T extends string>({
   );
 }
 
-async function readImages(files: FileList | null) {
-  if (!files) return [];
-  const picked = Array.from(files)
-    .slice(0, 4)
-    .filter((f) => f.size < 1_500_000);
-  return Promise.all(
-    picked.map(
-      (file) =>
-        new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.readAsDataURL(file);
-        }),
-    ),
+function MediaPicker({
+  kind,
+  refs,
+  profileId,
+  listingId,
+  onChange,
+  onBusy,
+}: {
+  kind: MediaKind;
+  refs: string[];
+  profileId: string | null;
+  listingId: string;
+  onChange: (next: string[]) => void;
+  onBusy: (busy: boolean) => void;
+}) {
+  const urls = useListingMedia(refs);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pick = async (list: FileList | null) => {
+    const files = Array.from(list ?? []).slice(0, 4 - refs.length);
+    if (files.length === 0) return;
+    setError(null);
+    setBusy(true);
+    onBusy(true);
+    try {
+      const added = await uploadListingMedia(files, { profileId, listingId, kind });
+      onChange([...refs, ...added].slice(0, 4));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      onBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-3">
+        {refs.map((ref, i) => (
+          <span key={ref} className="relative">
+            {isPdfRef(ref) ? (
+              <span className="grid size-20 place-items-center rounded-2xl bg-surface text-muted-foreground">
+                <FileText className="size-6" />
+              </span>
+            ) : (
+              <MediaThumb src={urls[i]} className="size-20 rounded-2xl object-cover" />
+            )}
+            <button
+              type="button"
+              aria-label="Quitar archivo"
+              className="absolute -right-2 -top-2 grid size-6 place-items-center rounded-full bg-foreground text-background"
+              onClick={() => onChange(refs.filter((_, j) => j !== i))}
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ))}
+        {refs.length < 4 && (
+          <label
+            className={`grid size-20 cursor-pointer place-items-center rounded-2xl border border-dashed border-border bg-surface text-muted-foreground ${busy ? "pointer-events-none opacity-60" : ""}`}
+          >
+            {busy ? <Loader2 className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
+            <input
+              type="file"
+              accept={acceptFor(kind)}
+              multiple
+              className="sr-only"
+              disabled={busy}
+              onChange={(e) => {
+                void pick(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   );
 }
 
@@ -107,6 +180,8 @@ export function ServiceEditor({
   const [step, setStep] = useState<"form" | "review">("form");
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const isUploading = Object.values(uploading).some(Boolean);
   const patch = (p: Partial<ServiceListing>) => setDraft((d) => ({ ...d, ...p }));
   const offering = draft.intent === "OFFER";
 
@@ -120,10 +195,16 @@ export function ServiceEditor({
 
   const [saveError, setSaveError] = useState<string | null>(null);
   const persist = async (status: ServiceListing["status"]) => {
+    if (isUploading) return;
     setSaving(true);
     setSaveError(null);
     try {
-      const saved = await saveListing({ ...draft, status });
+      // Requests don't carry a service radius.
+      const saved = await saveListing({ ...draft, status, radiusKm: offering ? draft.radiusKm : null });
+      const kept = new Set([...saved.photos, ...saved.portfolio]);
+      void removeListingMedia(
+        [...initial.photos, ...initial.portfolio].filter((r) => !kept.has(r)),
+      ).catch(() => {});
       onClose(saved);
     } catch (e) {
       setSaveError((e as Error).message);
