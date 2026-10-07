@@ -298,7 +298,7 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     -- No se rompe el alta; queda trazado y la cuenta sigue sin habilitar hasta aceptar.
     INSERT INTO public.audit_logs(action, actor_profile_id, entity_type, entity_id, metadata, is_demo)
-    VALUES ('legal_signup_consent_failed', NEW.id, 'profile', NEW.id, jsonb_build_object('error', SQLERRM), false);
+    VALUES ('legal_signup_consent_failed', NEW.id, 'profile', NEW.id, jsonb_build_object('sqlstate', SQLSTATE), false);
   END;
   RETURN NEW;
 END $$;
