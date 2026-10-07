@@ -23,6 +23,7 @@ export const LEGAL_NOT_INSTALLED =
 const MESSAGES: Record<string, string> = {
   not_authenticated: "Inicia sesión para continuar.",
   invalid_source: "Origen de aceptación no válido.",
+  legal_acceptance_required: "Acepta los documentos legales vigentes para continuar.",
   admin_only: "Solo un administrador puede hacer esto.",
   version_not_published: "Esa versión ya no está vigente. Recarga e inténtalo de nuevo.",
   too_many_requests: "Has enviado muchas solicitudes hoy. Inténtalo mañana.",

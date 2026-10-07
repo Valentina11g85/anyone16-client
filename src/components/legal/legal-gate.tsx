@@ -35,7 +35,10 @@ export function LegalGate({ email }: { email: string | null }) {
         if (alive) { setPending(list); setNeedsAge(!status.ageConfirmed); }
       } catch { /* not installed in Foundation yet: nothing to ask */ }
     })();
-    return () => { alive = false; };
+    // A new version published while the app is open: re-check when the person comes back.
+    const onFocus = () => { void refresh().catch(() => undefined); };
+    window.addEventListener("focus", onFocus);
+    return () => { alive = false; window.removeEventListener("focus", onFocus); };
   }, [email]);
 
   if (pending.length === 0 && !needsAge) return null;

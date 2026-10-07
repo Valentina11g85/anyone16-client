@@ -298,7 +298,7 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     -- No se rompe el alta; queda trazado y la cuenta sigue sin habilitar hasta aceptar.
     INSERT INTO public.audit_logs(action, actor_profile_id, entity_type, entity_id, metadata, is_demo)
-    VALUES ('legal_signup_consent_failed', NEW.id, 'profile', NEW.id, jsonb_build_object('error', SQLERRM), false);
+    VALUES ('legal_signup_consent_failed', NEW.id, 'profile', NEW.id, jsonb_build_object('sqlstate', SQLSTATE), false);
   END;
   RETURN NEW;
 END $$;
@@ -323,8 +323,8 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
         AND NOT EXISTS (SELECT 1 FROM public.legal_acceptances a
           WHERE a.profile_id = _profile AND a.document_version_id = v.id))
 $$;
-REVOKE ALL ON FUNCTION public.has_required_legal(uuid) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.has_required_legal(uuid) TO authenticated;
+REVOKE ALL ON FUNCTION public.has_required_legal(uuid) FROM PUBLIC, anon, authenticated;
+-- Solo uso interno (gate, get_my_legal_status): no se expone para consultar otros perfiles.
 
 -- Estado legal propio: pendientes (versión exacta) + si falta confirmar mayoría de edad.
 CREATE OR REPLACE FUNCTION public.get_my_legal_status()
