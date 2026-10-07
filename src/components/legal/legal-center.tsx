@@ -37,7 +37,7 @@ type View = { kind: "home" } | { kind: "doc"; type: LegalDocType; versionId?: st
 export function LegalCenter({ open, onOpenChange, initialDoc }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  initialDoc?: LegalDocType;
+  initialDoc?: LegalDocType | undefined;
 }) {
   const [view, setView] = useState<View>({ kind: "home" });
   const { versions, error } = useLegalVersions();
@@ -110,7 +110,7 @@ export function LegalCenter({ open, onOpenChange, initialDoc }: {
   );
 }
 
-function DocView({ type, versions, versionId }: { type: LegalDocType; versions: LegalVersion[]; versionId?: string }) {
+function DocView({ type, versions, versionId }: { type: LegalDocType; versions: LegalVersion[]; versionId?: string | undefined }) {
   const history = versions.filter((v) => v.documentType === type && v.status !== "draft");
   const current = versionId
     ? history.find((v) => v.id === versionId)
