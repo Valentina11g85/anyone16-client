@@ -45,6 +45,7 @@ import { FeeConfigAdmin } from "@/components/payments/fee-config-admin";
 import { AdminTrust } from "@/components/trust/admin-trust";
 import { PaymentsHistory } from "@/components/payments/payments-history";
 import { AdminPaymentSummary, MyEarnings, MyPayments } from "@/components/payments/my-payments";
+import { AdminWithdrawals, EarningsPanel } from "@/components/opportunities/earnings-panel";
 import { UnifiedHistory } from "@/components/history/unified-history";
 import { TrustSafetyCenter } from "@/components/trust/trust-safety-center";
 import { reviewsFor, useOpportunities } from "@/lib/opportunities-store";
@@ -55,6 +56,7 @@ import { countries, currencies, formatCurrencyName, languages } from "@/lib/mark
 
 const SECTIONS = [
   ["pf-hires", "Contrataciones", BriefcaseBusiness],
+  ["pf-gains", "Ganancias", Wallet],
   ["pf-history", "Historial", History],
   ["pf-payments", "Pagos", Receipt],
   ["pf-earnings", "Ingresos", Coins],
@@ -303,6 +305,12 @@ export function ProfileScreen({
         </div>
       </div>
 
+      {/* Ganancias de Oportunidades (saldo calculado en Foundation) */}
+      <div className="mt-10">
+        <SectionHead id="pf-gains" icon={Wallet} kicker="Oportunidades" title="Ganancias" />
+        <EarningsPanel profileId={profile.id} />
+      </div>
+
       {/* Reseñas recibidas (Oportunidades): reviewed_profile_id = este perfil */}
       <div className="mt-10">
         <SectionHead id="pf-reviews" icon={Star} kicker="Oportunidades" title="Reseñas" />
@@ -358,6 +366,7 @@ export function ProfileScreen({
           <AdminFinance languageCode={profile.languageCode} />
           <FeeConfigAdmin />
           <AdminTrust languageCode={profile.languageCode} adminProfileId={profile.id} />
+          <AdminWithdrawals />
         </div>
       </div>
 
