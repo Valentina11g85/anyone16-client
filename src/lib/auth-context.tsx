@@ -76,6 +76,7 @@ type AuthContextValue = {
     countryCode: string;
     languageCode: string;
     currencyCode: string;
+    consents: { acceptTerms: boolean; acceptDataAndAge: boolean; marketing: boolean };
   }) => Promise<{ needsConfirmation: boolean }>;
   signIn: (email: string, password: string, remember: boolean) => Promise<void>;
   signOut: () => Promise<void>;
@@ -275,6 +276,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               country_code: input.countryCode,
               language_code: input.languageCode,
               currency_code: input.currencyCode,
+              // Only the ticked boxes; Foundation resolves version/date/jurisdiction itself.
+              legal_accept_terms: input.consents.acceptTerms,
+              legal_accept_data_age: input.consents.acceptDataAndAge,
+              legal_marketing: input.consents.marketing,
             },
           },
         });
