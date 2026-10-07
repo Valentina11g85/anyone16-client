@@ -146,7 +146,12 @@ export function HomeScreen({
   const [notifOpen, setNotifOpen] = useState(false);
   const unreadNotifications = useNotificationsSync();
   /** Worker items open worker mode on Offers (tracking + chat), not the client's favors. */
-  const openTarget = (t: "favors" | "opportunities" | "worker-offers") => {
+  const openTarget = (t: "favors" | "opportunities" | "worker-offers" | "earnings") => {
+    if (t === "earnings") {
+      setTab("profile");
+      setTimeout(() => document.getElementById("pf-gains")?.scrollIntoView({ behavior: "smooth" }), 300);
+      return;
+    }
     if (t === "worker-offers") {
       requestWorkerTab("offers");
       onSwitchToWorker();

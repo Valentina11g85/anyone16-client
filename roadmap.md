@@ -6,3 +6,5 @@
 - [ ] Notificaciones inbox sheet restyle by type (not done yet)
 - [x] Oportunidades bugfix round (radio, fotos/portafolio en Storage, contador y destinos de notificaciones, reseña de contratación, estado finalizado)
 - [ ] Foundation: ejecutar docs/foundation-pending/2026-10-04_oportunidades_media_storage.sql (bucket privado de fotos/portafolio)
+- [ ] Ejecutar en Foundation 2026-10-07_oportunidades_ganancias_retiros.sql (ganancias y retiros) — lo ejecuta el usuario.
+- [ ] Conectar proveedor de payouts (futuro).
