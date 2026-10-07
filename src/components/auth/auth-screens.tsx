@@ -19,6 +19,7 @@ export type AuthMode = "signup" | "login" | "forgot";
 
 const friendlyError = (message: string) => {
   const text = message.toLowerCase();
+  if (text.includes("legal_required")) return "Para crear tu cuenta acepta los Términos y autoriza el tratamiento de tus datos.";
   if (text.includes("invalid login")) return "Correo o contraseña incorrectos.";
   if (text.includes("already registered") || text.includes("already been registered"))
     return "Ya existe una cuenta con este correo. Inicia sesión.";
