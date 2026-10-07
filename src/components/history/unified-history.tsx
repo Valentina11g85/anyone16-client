@@ -5,7 +5,7 @@
  */
 import { useMemo, useState } from "react";
 
-import { Briefcase, HandHeart, ShoppingBag, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowRight, Briefcase, Check, Clock3, HandHeart, Inbox, Loader2, ShoppingBag, Wallet, Wrench, X } from "lucide-react";
 import { createTranslator } from "@/lib/i18n";
 import { useMarketplace } from "@/lib/marketplace-store";
 import { useOpportunities } from "@/lib/opportunities-store";
@@ -125,56 +125,94 @@ export function UnifiedHistory({
     return "pending";
   };
 
+  const TONE_ICON = { done: Check, cancel: X, dispute: AlertTriangle, progress: Loader2, pending: Clock3 } as const;
+  const dayLabel = (iso: string) => {
+    const d = new Date(iso);
+    const today = new Date();
+    const start = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((start(today) - start(d)) / 86400000);
+    if (diff === 0) return "Hoy";
+    if (diff === 1) return "Ayer";
+    return d.toLocaleDateString("es-CO", { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  };
+  const groups: { label: string; items: Item[] }[] = [];
+  for (const i of shown) {
+    const label = dayLabel(i.date);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(i);
+    else groups.push({ label, items: [i] });
+  }
+  const filters: { id: HistoryRole | "all"; label: string; n: number }[] = [
+    { id: "all", label: "Todo", n: items.length },
+    ...(Object.keys(ROLE_LABEL) as HistoryRole[]).map((r) => ({ id: r, label: ROLE_LABEL[r].replace("Como ", ""), n: count(r) })),
+  ];
+
   return (
-    <div>
-      <div className="pf-filters no-scrollbar">
-        <button type="button" className="pf-filter" data-on={filter === "all"} onClick={() => setFilter("all")}>
-          Todo <b>{items.length}</b>
-        </button>
-        {(Object.keys(ROLE_LABEL) as HistoryRole[]).map((r) => (
-          <button key={r} type="button" className="pf-filter" data-on={filter === r} onClick={() => setFilter(r)}>
-            {ROLE_LABEL[r].replace("Como ", "")} <b>{count(r)}</b>
+    <div className="hx">
+      <div className="hx-filters no-scrollbar" role="tablist" aria-label="Filtrar historial">
+        {filters.map((f) => (
+          <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} className="hx-filter"
+            data-on={filter === f.id} onClick={() => setFilter(f.id)}>
+            {f.label} <b>{f.n}</b>
           </button>
         ))}
       </div>
-      <ul className="uv-archive mt-4 grid gap-3 sm:grid-cols-2">
-        {(m.loading || o.loading) && items.length === 0 &&
-          [0, 1].map((k) => <li key={k} className="pf-skel" aria-hidden />)}
-        {!m.loading && !o.loading && shown.length === 0 && (
-          <li className="pf-empty sm:col-span-2">No hay actividad en esta categoría todavía.</li>
-        )}
-        {shown.map((i) => {
-          const tn = tone(i.status);
-          const RoleIcon = ROLE_ICON[i.role];
-          return (
-            <li key={i.key} className="uv-archive-item" data-tone={tn}>
-              <span className="uv-node" aria-hidden="true"><RoleIcon strokeWidth={1.7} /></span>
-              <button type="button" onClick={() => onNavigate(i.target)} className="pf-item pf-item-tall" data-tone={tn}>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="pf-status" data-tone={tn}>{i.status}</span>
-                    <span className="text-[0.7rem] font-bold uppercase tracking-wider text-primary">{ROLE_LABEL[i.role]}</span>
-                  </span>
-                  <span className="mt-2 block truncate font-bold text-foreground">{i.title}</span>
-                  <span className="block truncate text-xs text-muted-foreground">Con {i.counterpart}</span>
-                  <span className="mt-3 flex items-end justify-between gap-3">
-                    <span>
-                      <span className="block font-display text-xl font-extrabold text-foreground">
-                        {i.amount != null ? formatPaymentMoney(i.amount, i.currency) : "Monto sin acordar"}
+
+      {(m.loading || o.loading) && items.length === 0 && (
+        <div className="hx-timeline mt-5" aria-hidden="true">
+          {[0, 1].map((k) => <div key={k} className="pf-skel hx-skel" />)}
+        </div>
+      )}
+
+      {!m.loading && !o.loading && shown.length === 0 && (
+        <div className="hx-empty">
+          <span className="hx-empty-icon"><Inbox strokeWidth={1.6} /></span>
+          <p className="font-display text-base font-bold text-foreground">Todavía no hay actividad</p>
+          <p className="text-sm text-muted-foreground">Cuando completes o participes en un servicio, aparecerá aquí.</p>
+        </div>
+      )}
+
+      <div key={filter} className="hx-groups">
+        {groups.map((g) => (
+          <section key={g.label} className="hx-group">
+            <h3 className="hx-day"><span>{g.label}</span></h3>
+            <ol className="hx-timeline">
+              {g.items.map((i, idx) => {
+                const tn = tone(i.status);
+                const RoleIcon = ROLE_ICON[i.role];
+                const ToneIcon = TONE_ICON[tn as keyof typeof TONE_ICON];
+                return (
+                  <li key={i.key} className="hx-item" data-tone={tn} style={{ animationDelay: `${Math.min(idx, 8) * 45}ms` }}>
+                    <span className="hx-dot" aria-hidden="true"><ToneIcon strokeWidth={2.2} /></span>
+                    <button type="button" onClick={() => onNavigate(i.target)} className="hx-card">
+                      <span className="hx-row">
+                        <span className="hx-status" data-tone={tn}>{i.status}</span>
+                        <span className="hx-role"><RoleIcon strokeWidth={1.8} />{ROLE_LABEL[i.role].replace("Como ", "")}</span>
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(i.date).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })}
-                        {i.payment && ` · Pago: ${i.payment}`}
+                      <span className="hx-title">{i.title}</span>
+                      <span className="hx-sub">Con {i.counterpart}</span>
+                      <span className="hx-foot">
+                        <span className="min-w-0">
+                          <span className="hx-amount">
+                            {i.amount != null ? formatPaymentMoney(i.amount, i.currency) : "Monto sin acordar"}
+                          </span>
+                          <span className="hx-meta">
+                            {new Date(i.date).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                          </span>
+                          {i.payment && (
+                            <span className="hx-meta hx-pay"><Wallet strokeWidth={1.8} />Pago: {i.payment}</span>
+                          )}
+                        </span>
+                        <span className="hx-go">Ver detalle <ArrowRight strokeWidth={2} /></span>
                       </span>
-                    </span>
-                    <span className="pf-go shrink-0">Ver detalle →</span>
-                  </span>
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
