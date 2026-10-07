@@ -5,6 +5,10 @@
 --            audit_logs y notifications. No existía ninguna estructura legal equivalente
 --            (solo consent_given_at en verificaciones de trabajadores, que no se toca).
 --
+-- Aceptación: se registra server-side en la misma transacción que crea el perfil de la
+-- cuenta nueva (trigger en profiles, lee las casillas enviadas como metadata del alta).
+-- Sin IP ni user-agent. Mayoría de edad = consentimiento independiente.
+--
 -- Tablas nuevas:
 --   legal_document_versions  versiones de cada documento (draft → published → archived)
 --   legal_acceptances        aceptaciones/consentimientos, registradas SOLO por RPC (hora y versión del servidor)
@@ -80,17 +84,24 @@ CREATE TABLE IF NOT EXISTS public.legal_acceptances (
   profile_id uuid NOT NULL REFERENCES public.profiles(id),
   user_id uuid NOT NULL,
   consent_type text NOT NULL CHECK (consent_type IN (
-    'terms', 'privacy_policy', 'data_treatment', 'marketing', 'location')),
+    'terms', 'privacy_policy', 'data_treatment', 'age_confirmation', 'marketing', 'location')),
   document_version_id uuid REFERENCES public.legal_document_versions(id),
   document_version text,
   language text,
   jurisdiction text,
   granted boolean NOT NULL,                 -- false = revocatoria (queda como evento nuevo)
   source text NOT NULL CHECK (source IN ('signup', 'update_prompt', 'legal_center')),
-  user_agent text CHECK (user_agent IS NULL OR char_length(user_agent) <= 300),
+  -- Sin IP ni user-agent: no son necesarios para probar la aceptación (usuario + versión + hora del servidor).
   created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (consent_type IN ('marketing', 'location') OR document_version_id IS NOT NULL)
+  -- Documentos exigen versión exacta; edad y opcionales no tienen documento.
+  CHECK (consent_type IN ('age_confirmation', 'marketing', 'location') OR document_version_id IS NOT NULL),
+  CHECK (consent_type NOT IN ('age_confirmation', 'marketing', 'location') OR document_version_id IS NULL),
+  -- La edad y los documentos solo se otorgan; su revocatoria va por privacy_requests (no se borra nada).
+  CHECK (granted OR consent_type IN ('marketing', 'location'))
 );
+-- Una sola aceptación por persona y versión exacta de documento.
+CREATE UNIQUE INDEX IF NOT EXISTS legal_acceptances_one_per_version
+  ON public.legal_acceptances (profile_id, document_version_id) WHERE document_version_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS legal_acceptances_profile_idx ON public.legal_acceptances (profile_id, consent_type, created_at DESC);
 CREATE OR REPLACE FUNCTION public.legal_acceptances_append_only()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -201,32 +212,131 @@ $$;
 REVOKE ALL ON FUNCTION public.get_my_pending_legal(text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_my_pending_legal(text, text) TO authenticated;
 
--- Acepta versiones publicadas. Versión, fecha y usuario los pone el servidor.
-CREATE OR REPLACE FUNCTION public.accept_legal_versions(
-  _version_ids uuid[], _source text, _user_agent text DEFAULT NULL)
+-- Núcleo común: registra versiones publicadas y/o la confirmación de edad para un perfil.
+-- Versión, idioma, jurisdicción, tipo de documento, usuario y hora los decide SIEMPRE el servidor.
+-- Interno: no se concede a ningún rol.
+CREATE OR REPLACE FUNCTION public.legal_record_acceptances(
+  _profile uuid, _user uuid, _version_ids uuid[], _confirm_age boolean, _source text)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE me uuid := public.current_profile_id(); v public.legal_document_versions; n integer := 0;
+DECLARE v public.legal_document_versions; n integer := 0;
 BEGIN
-  IF me IS NULL THEN RAISE EXCEPTION 'not_authenticated' USING ERRCODE = '42501'; END IF;
-  IF _source NOT IN ('signup', 'update_prompt', 'legal_center') THEN RAISE EXCEPTION 'invalid_source'; END IF;
-  FOR v IN SELECT * FROM public.legal_document_versions WHERE id = ANY(_version_ids) LOOP
+  FOR v IN SELECT * FROM public.legal_document_versions WHERE id = ANY(coalesce(_version_ids, '{}')) LOOP
     IF v.status <> 'published' THEN RAISE EXCEPTION 'version_not_published' USING ERRCODE = '22023'; END IF;
-    IF v.document_type NOT IN ('terms', 'privacy_policy', 'data_treatment') THEN CONTINUE; END IF;
-    IF EXISTS (SELECT 1 FROM public.legal_acceptances WHERE profile_id = me AND document_version_id = v.id AND granted) THEN CONTINUE; END IF;
+    IF NOT v.requires_acceptance OR v.document_type NOT IN ('terms', 'privacy_policy', 'data_treatment') THEN CONTINUE; END IF;
     INSERT INTO public.legal_acceptances(profile_id, user_id, consent_type, document_version_id,
-      document_version, language, jurisdiction, granted, source, user_agent)
-    VALUES (me, auth.uid(), v.document_type, v.id, v.version, v.language, v.jurisdiction, true,
-      _source, left(_user_agent, 300));
-    n := n + 1;
+      document_version, language, jurisdiction, granted, source)
+    VALUES (_profile, _user, v.document_type, v.id, v.version, v.language, v.jurisdiction, true, _source)
+    ON CONFLICT (profile_id, document_version_id) WHERE document_version_id IS NOT NULL DO NOTHING;
+    IF FOUND THEN n := n + 1; END IF;
   END LOOP;
+  IF coalesce(_confirm_age, false) AND NOT EXISTS (
+      SELECT 1 FROM public.legal_acceptances WHERE profile_id = _profile AND consent_type = 'age_confirmation') THEN
+    INSERT INTO public.legal_acceptances(profile_id, user_id, consent_type, granted, source)
+    VALUES (_profile, _user, 'age_confirmation', true, _source);
+    n := n + 1;
+  END IF;
   IF n > 0 THEN
     INSERT INTO public.audit_logs(action, actor_profile_id, entity_type, entity_id, metadata, is_demo)
-    VALUES ('legal_accepted', me, 'profile', me, jsonb_build_object('versions', _version_ids, 'source', _source), false);
+    VALUES ('legal_accepted', _profile, 'profile', _profile,
+      jsonb_build_object('versions', _version_ids, 'age', coalesce(_confirm_age, false), 'source', _source), false);
   END IF;
   RETURN n;
 END $$;
-REVOKE ALL ON FUNCTION public.accept_legal_versions(uuid[], text, text) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.accept_legal_versions(uuid[], text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.legal_record_acceptances(uuid, uuid, uuid[], boolean, text) FROM PUBLIC, anon, authenticated;
+
+-- Aceptación desde la app (actualizaciones o cuentas que aún no tienen todo registrado).
+-- 'signup' NO se acepta desde el navegador: el registro lo hace el trigger de perfiles.
+DROP FUNCTION IF EXISTS public.accept_legal_versions(uuid[], text, text);
+CREATE OR REPLACE FUNCTION public.accept_legal_versions(
+  _version_ids uuid[], _source text, _confirm_age boolean DEFAULT false)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE me uuid := public.current_profile_id();
+BEGIN
+  IF me IS NULL THEN RAISE EXCEPTION 'not_authenticated' USING ERRCODE = '42501'; END IF;
+  IF _source NOT IN ('update_prompt', 'legal_center') THEN RAISE EXCEPTION 'invalid_source' USING ERRCODE = '22023'; END IF;
+  RETURN public.legal_record_acceptances(me, auth.uid(), _version_ids, _confirm_age, _source);
+END $$;
+REVOKE ALL ON FUNCTION public.accept_legal_versions(uuid[], text, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.accept_legal_versions(uuid[], text, boolean) TO authenticated;
+
+-- Registro en el alta: se ejecuta en la MISMA transacción en que Foundation crea el perfil
+-- de la cuenta nueva (después de que Auth creó el usuario). Lee las casillas que el formulario
+-- envió como metadata del usuario (legal_accept_terms, legal_accept_data_age, legal_marketing)
+-- y registra SOLO lo marcado, contra las versiones PUBLICADAS en ese momento.
+-- Nunca bloquea el alta: si falta algo, la cuenta queda sin aceptaciones obligatorias y
+-- get_my_legal_status / has_required_legal la tratan como no habilitada hasta completarlas.
+CREATE OR REPLACE FUNCTION public.legal_profiles_signup_consent()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE meta jsonb; lang text; ids uuid[] := '{}';
+BEGIN
+  IF NEW.user_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'UPDATE' AND OLD.user_id IS NOT DISTINCT FROM NEW.user_id THEN RETURN NEW; END IF;
+  BEGIN
+    SELECT coalesce(u.raw_user_meta_data, '{}'::jsonb) INTO meta FROM auth.users u WHERE u.id = NEW.user_id;
+    IF meta IS NULL THEN RETURN NEW; END IF;
+    lang := CASE WHEN NEW.language_code = 'en' THEN 'en' ELSE 'es' END;
+    IF (meta->>'legal_accept_terms') = 'true' THEN
+      ids := ids || ARRAY(SELECT id FROM public.legal_document_versions
+        WHERE status = 'published' AND jurisdiction = 'CO' AND document_type IN ('terms', 'privacy_policy')
+          AND language = coalesce((SELECT lang WHERE EXISTS (SELECT 1 FROM public.legal_document_versions x
+            WHERE x.status = 'published' AND x.language = lang)), 'es'));
+    END IF;
+    IF (meta->>'legal_accept_data_age') = 'true' THEN
+      ids := ids || ARRAY(SELECT id FROM public.legal_document_versions
+        WHERE status = 'published' AND jurisdiction = 'CO' AND document_type = 'data_treatment'
+          AND language = coalesce((SELECT lang WHERE EXISTS (SELECT 1 FROM public.legal_document_versions x
+            WHERE x.status = 'published' AND x.language = lang)), 'es'));
+    END IF;
+    PERFORM public.legal_record_acceptances(NEW.id, NEW.user_id, ids,
+      (meta->>'legal_accept_data_age') = 'true', 'signup');
+    -- Comunicaciones comerciales: solo si se marcaron. Ausencia = no se registra nada.
+    IF (meta->>'legal_marketing') = 'true' THEN
+      INSERT INTO public.legal_acceptances(profile_id, user_id, consent_type, granted, source)
+      VALUES (NEW.id, NEW.user_id, 'marketing', true, 'signup');
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    -- No se rompe el alta; queda trazado y la cuenta sigue sin habilitar hasta aceptar.
+    INSERT INTO public.audit_logs(action, actor_profile_id, entity_type, entity_id, metadata, is_demo)
+    VALUES ('legal_signup_consent_failed', NEW.id, 'profile', NEW.id, jsonb_build_object('error', SQLERRM), false);
+  END;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.legal_profiles_signup_consent() FROM PUBLIC, anon, authenticated;
+DROP TRIGGER IF EXISTS legal_profiles_signup_consent_trg ON public.profiles;
+CREATE TRIGGER legal_profiles_signup_consent_trg AFTER INSERT OR UPDATE OF user_id ON public.profiles
+FOR EACH ROW EXECUTE FUNCTION public.legal_profiles_signup_consent();
+
+-- ¿La cuenta tiene todo lo obligatorio? (versiones publicadas vigentes que exigen aceptación + edad).
+-- Usable en RLS/RPCs futuras para impedir actuar como cuenta plenamente activa.
+CREATE OR REPLACE FUNCTION public.has_required_legal(_profile uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT _profile IS NOT NULL
+    AND EXISTS (SELECT 1 FROM public.legal_acceptances a WHERE a.profile_id = _profile AND a.consent_type = 'age_confirmation')
+    AND NOT EXISTS (
+      SELECT 1 FROM public.legal_document_versions v
+      WHERE v.status = 'published' AND v.requires_acceptance AND v.jurisdiction = 'CO'
+        AND v.document_type IN ('terms', 'privacy_policy', 'data_treatment')
+        AND v.language = coalesce((SELECT CASE WHEN p.language_code = 'en' AND EXISTS (
+              SELECT 1 FROM public.legal_document_versions x WHERE x.status = 'published' AND x.language = 'en')
+            THEN 'en' END FROM public.profiles p WHERE p.id = _profile), 'es')
+        AND NOT EXISTS (SELECT 1 FROM public.legal_acceptances a
+          WHERE a.profile_id = _profile AND a.document_version_id = v.id))
+$$;
+REVOKE ALL ON FUNCTION public.has_required_legal(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.has_required_legal(uuid) TO authenticated;
+
+-- Estado legal propio: pendientes (versión exacta) + si falta confirmar mayoría de edad.
+CREATE OR REPLACE FUNCTION public.get_my_legal_status()
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+DECLARE me uuid := public.current_profile_id();
+BEGIN
+  IF me IS NULL THEN RAISE EXCEPTION 'not_authenticated' USING ERRCODE = '42501'; END IF;
+  RETURN jsonb_build_object(
+    'complete', public.has_required_legal(me),
+    'age_confirmed', EXISTS (SELECT 1 FROM public.legal_acceptances WHERE profile_id = me AND consent_type = 'age_confirmation'));
+END $$;
+REVOKE ALL ON FUNCTION public.get_my_legal_status() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_my_legal_status() TO authenticated;
 
 -- Consentimientos opcionales (comunicaciones comerciales, ubicación): otorgar o revocar.
 CREATE OR REPLACE FUNCTION public.set_optional_consent(_consent_type text, _granted boolean, _source text)
@@ -235,6 +345,8 @@ DECLARE me uuid := public.current_profile_id();
 BEGIN
   IF me IS NULL THEN RAISE EXCEPTION 'not_authenticated' USING ERRCODE = '42501'; END IF;
   IF _consent_type NOT IN ('marketing', 'location') THEN RAISE EXCEPTION 'invalid_consent_type'; END IF;
+  IF _source NOT IN ('update_prompt', 'legal_center') THEN RAISE EXCEPTION 'invalid_source' USING ERRCODE = '22023'; END IF;
+  -- Evento nuevo (otorgar o revocar); el historial nunca se modifica.
   INSERT INTO public.legal_acceptances(profile_id, user_id, consent_type, granted, source)
   VALUES (me, auth.uid(), _consent_type, _granted, _source);
   INSERT INTO public.audit_logs(action, actor_profile_id, entity_type, entity_id, metadata, is_demo)
