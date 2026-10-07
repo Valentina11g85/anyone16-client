@@ -5,7 +5,7 @@
  */
 
 import { requestOpportunityFocus } from "@/lib/opportunities-focus";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -108,6 +108,21 @@ export function ProfileScreen({
   const trust = useTrust();
   const [trustOpen, setTrustOpen] = useState(false);
   const [legalOpen, setLegalOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0][0]);
+  // Scroll-spy: highlights the section currently in view (no second navigation).
+  useEffect(() => {
+    const els = SECTIONS.map(([id]) => document.getElementById(id)).filter((e): e is HTMLElement => !!e);
+    if (!els.length || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActiveSection(top.target.id);
+      },
+      { rootMargin: "-20% 0px -60% 0px" },
+    );
+    els.forEach((e) => io.observe(e));
+    return () => io.disconnect();
+  }, [profile?.id]);
 
   const favorTitles = Object.fromEntries(
     marketplace.favors.map((favor) => [favor.id, favor.description || "Favor"]),
@@ -252,7 +267,7 @@ export function ProfileScreen({
       {/* Section nav */}
       <nav className="pf-nav no-scrollbar mt-6" aria-label="Secciones del perfil">
         {SECTIONS.map(([id, label, Icon]) => (
-          <a key={id} href={`#${id}`} className="pf-nav-item">
+          <a key={id} href={`#${id}`} className="pf-nav-item" aria-current={activeSection === id ? "true" : undefined}>
             <Icon className="size-4" strokeWidth={1.7} /> {label}
           </a>
         ))}
