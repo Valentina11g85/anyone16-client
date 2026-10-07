@@ -22,6 +22,7 @@ export const LEGAL_NOT_INSTALLED =
   "El Centro Legal todavía no está instalado en Foundation. Se muestran los borradores.";
 const MESSAGES: Record<string, string> = {
   not_authenticated: "Inicia sesión para continuar.",
+  invalid_source: "Origen de aceptación no válido.",
   admin_only: "Solo un administrador puede hacer esto.",
   version_not_published: "Esa versión ya no está vigente. Recarga e inténtalo de nuevo.",
   too_many_requests: "Has enviado muchas solicitudes hoy. Inténtalo mañana.",
@@ -149,16 +150,24 @@ export async function loadPendingLegal(language = "es", jurisdiction = "CO") {
   return ((data ?? []) as Row[]).map(toVersion);
 }
 
-export async function acceptLegal(versionIds: string[], source: "signup" | "update_prompt" | "legal_center") {
+export async function acceptLegal(versionIds: string[], source: "update_prompt" | "legal_center", confirmAge = false) {
   const { error } = await db().rpc("accept_legal_versions", {
     _version_ids: versionIds,
     _source: source,
-    _user_agent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 300) : null,
+    _confirm_age: confirmAge,
   });
   if (error) throw toError(error);
 }
 
-export async function setOptionalConsent(type: "marketing" | "location", granted: boolean, source: "signup" | "legal_center") {
+/** Foundation's view of whether this account has every mandatory acceptance. */
+export async function loadLegalStatus() {
+  const { data, error } = await db().rpc("get_my_legal_status");
+  if (error) throw toError(error);
+  const r = (data ?? {}) as Row;
+  return { complete: Boolean(r["complete"]), ageConfirmed: Boolean(r["age_confirmed"]) };
+}
+
+export async function setOptionalConsent(type: "marketing" | "location", granted: boolean, source: "legal_center") {
   const { error } = await db().rpc("set_optional_consent", { _consent_type: type, _granted: granted, _source: source });
   if (error) throw toError(error);
 }
@@ -233,16 +242,7 @@ export function useLegalVersions() {
   return { versions, error, reload };
 }
 
-/* Signup intent: what the person ticked BEFORE they had a session (email confirmation).
-   It is only an intent; Foundation records the acceptance on the first authenticated session. */
-const INTENT_KEY = "anyone16.legal-intent";
-export type SignupIntent = { email: string; marketing: boolean; at: string };
-export const saveSignupIntent = (i: SignupIntent) => {
-  try { localStorage.setItem(INTENT_KEY, JSON.stringify(i)); } catch { /* storage unavailable */ }
-};
-export const readSignupIntent = (): SignupIntent | null => {
-  try { const raw = localStorage.getItem(INTENT_KEY); return raw ? (JSON.parse(raw) as SignupIntent) : null; } catch { return null; }
-};
-export const clearSignupIntent = () => {
-  try { localStorage.removeItem(INTENT_KEY); } catch { /* ignore */ }
-};
+/* Signup consent travels with the account-creation request (see auth-context signUp) and is
+   recorded by Foundation in the same transaction that creates the profile. Nothing is stored in
+   the browser and nothing in the browser counts as an acceptance. */
+export type SignupConsents = { acceptTerms: boolean; acceptDataAndAge: boolean; marketing: boolean };
