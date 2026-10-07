@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS public.service_earnings (
   reversal_reason text,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (net_amount <= gross_amount),
-  CHECK ((status = 'available') = (released_at IS NOT NULL AND reversed_at IS NULL) OR status <> 'available'),
+  CHECK (status <> 'available' OR released_at IS NOT NULL),
   CHECK (status <> 'reversed' OR reversed_at IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS service_earnings_provider_idx
