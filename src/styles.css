@@ -2375,10 +2375,6 @@ html [data-uv][data-uv-settled] { transition: translate .9s cubic-bezier(.2,.7,.
     border: 1px solid color-mix(in oklab, var(--primary) 16%, transparent); }
   .pf-nav-item { position: relative; border-radius: 9999px !important; padding: .7rem 1.1rem !important;
     background: color-mix(in oklab, var(--card) 60%, transparent) !important; border: 1px solid color-mix(in oklab, var(--primary) 20%, transparent); transition: transform .25s, border-color .25s; }
-  .pf-nav-item:nth-child(4n+1) { translate: 0 -.9rem; }
-  .pf-nav-item:nth-child(4n+2) { translate: 0 .6rem; scale: .94; }
-  .pf-nav-item:nth-child(4n+3) { translate: 0 1.1rem; }
-  .pf-nav-item:nth-child(4n) { translate: 0 -.4rem; scale: .9; opacity: .9; }
   .pf-nav-item:hover, .pf-nav-item:focus-visible { transform: scale(1.06); border-color: var(--primary); opacity: 1; }
   /* sections drift left/right around the centre instead of one stacked column */
   .pf > div.mt-10:nth-of-type(odd), .pf > section:nth-of-type(odd) { margin-inline-end: 3rem; }
@@ -2488,7 +2484,6 @@ html[data-uv-perf="low"] [data-uv]:hover { filter: none; }
     border: 1px solid color-mix(in oklab, var(--primary) 22%, transparent); background: color-mix(in oklab, var(--card) 45%, transparent); }
   .pf-stats > div:nth-child(even) { translate: 0 .6rem !important; width: 5.75rem; }
   .pf-nav-item { border-radius: 9999px !important; }
-  .pf-nav-item:nth-child(even) { translate: 0 .4rem !important; }
   .pf-nav { padding-block: .5rem 1rem; }
 
   /* Payments: state nodes on the energy line, swipeable */
@@ -2671,3 +2666,34 @@ html[data-theme="light"] .pf-metric { background-color: oklch(1 0 0 / .75) !impo
 .opx-nav { display: flex; gap: .4rem; overflow-x: auto; padding: .35rem; border-radius: 999px; background: color-mix(in oklab, var(--card) 80%, transparent); border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent); scrollbar-width: none; }
 .opx-nav button { flex: none; min-height: 2.6rem; padding: 0 1rem; border-radius: 999px; font-size: .85rem; font-weight: 700; color: var(--muted-foreground); }
 .opx-nav button[aria-current="page"] { background: var(--primary); color: var(--primary-foreground); }
+
+/* ===== Perfil · navegación secundaria estructural (anula las variantes "órbita") =====
+   Una sola fila en el flujo del documento: nunca flota sobre el contenido. */
+.pf .pf-nav {
+  position: relative !important; top: auto !important; z-index: auto !important;
+  display: flex !important; flex-wrap: nowrap !important; justify-content: flex-start !important;
+  gap: .5rem !important; overflow-x: auto !important; overflow-y: hidden !important;
+  overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin;
+  padding: .45rem !important; margin-bottom: .5rem;
+  border-radius: 999px; background: color-mix(in oklab, var(--card) 82%, transparent);
+  backdrop-filter: blur(14px); box-shadow: 0 0 0 1px var(--pf-line), 0 10px 30px -20px oklch(0 0 0 / .5);
+}
+.pf .pf-nav::before { content: none !important; }
+.pf .pf-nav-item {
+  transform: none !important; opacity: 1 !important;
+  flex: 0 0 auto; white-space: nowrap; scroll-snap-align: start;
+  padding: .55rem 1rem !important; font-size: .85rem;
+  border: 1px solid color-mix(in oklab, var(--primary) 16%, transparent);
+  background: color-mix(in oklab, var(--card) 60%, transparent) !important;
+}
+.pf .pf-nav-item[aria-current="true"] {
+  color: var(--primary-foreground); background: var(--primary) !important; border-color: var(--primary);
+  box-shadow: 0 0 18px -6px var(--primary);
+}
+/* Centrar sin recortar la primera pestaña cuando hay desborde. */
+.pf .pf-nav > .pf-nav-item:first-child { margin-inline-start: auto; }
+.pf .pf-nav > .pf-nav-item:last-child { margin-inline-end: auto; }
+/* Sin "efecto cámara" en la barra: no debe moverse sobre el contenido. */
+html[data-uv-perf="high"] .pf nav.pf-nav { translate: 0 0; }
+/* Secciones: el ancla deja aire al saltar, el contenido nunca queda tapado. */
+.pf [id^="pf-"] { scroll-margin-top: 6rem; }

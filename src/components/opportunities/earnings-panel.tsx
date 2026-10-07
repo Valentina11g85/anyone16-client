@@ -102,6 +102,9 @@ export function EarningsPanel({ profileId }: { profileId: string }) {
         <div className="pf-world" data-accent="red">
           <p className="eyebrow text-[0.65rem] font-bold uppercase">Saldo disponible</p>
           <p className="mt-1 font-display text-4xl font-extrabold text-foreground sm:text-5xl">{money(bal?.available ?? 0)}</p>
+          {(bal?.debt ?? 0) > 0 && (
+            <p className="mt-1 text-xs text-destructive">Saldo pendiente por compensar: {money(bal!.debt)} (reembolso posterior a un retiro). Se descontará de tus próximas ganancias.</p>
+          )}
           {(bal?.inWithdrawal ?? 0) > 0 && (
             <p className="mt-1 text-xs text-muted-foreground">{money(bal!.inWithdrawal)} en retiros en curso</p>
           )}
@@ -346,8 +349,8 @@ function WithdrawDialog({ balance, methods, onClose, onDone, onAddMethod }: {
           <div className="space-y-3">
             <div className="rounded-2xl bg-surface p-4 text-sm">
               <p className="flex justify-between"><span>Monto a retirar</span><b>{money(value)}</b></p>
-              <p className="flex justify-between text-muted-foreground"><span>Comisión</span><span>La calcula AnyOne al confirmar (hoy 0)</span></p>
-              <p className="mt-2 flex justify-between border-t border-border pt-2"><span>Monto que recibirás</span><b>{money(value)}</b></p>
+              <p className="flex justify-between text-muted-foreground"><span>Comisión</span><span>Se calcula al confirmar</span></p>
+              <p className="mt-2 flex justify-between border-t border-border pt-2"><span>Monto que recibirás</span><b>Monto − comisión</b></p>
             </div>
             <p className="text-xs text-muted-foreground">Tu solicitud quedará pendiente. Aún no se realizan transferencias automáticas: te avisaremos cuando cambie de estado.</p>
             <div className="flex gap-2">
@@ -373,12 +376,12 @@ export function AdminWithdrawals() {
     void isFinanceAdmin().then((ok) => { setAdmin(ok); if (ok) void reload(); });
   }, []);
   if (!admin) return null;
-  const act = (id: string, s: "approved" | "processing" | "completed" | "rejected") =>
+  const act = (id: string, s: "approved" | "processing" | "rejected") =>
     void adminTransitionWithdrawal(id, s, reason[id], ref[id]).then(() => { setErr(null); void reload(); }, (e: Error) => setErr(e.message));
   return (
     <section className="uv-module rounded-[22px] border border-border bg-card p-5 shadow-soft">
       <h2 className="font-display text-lg font-extrabold text-foreground">Retiros de Oportunidades (admin)</h2>
-      <p className="text-xs text-muted-foreground">No hay pagos reales conectados: los cambios solo registran el estado.</p>
+      <p className="text-xs text-muted-foreground">No hay proveedor de transferencias conectado: aprobar o marcar "procesando" solo registra el estado. Ningún retiro puede figurar como completado sin una transferencia real confirmada.</p>
       {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
       {list.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">Sin solicitudes.</p> : (
         <ul className="mt-3 space-y-2.5">
@@ -396,7 +399,7 @@ export function AdminWithdrawals() {
                   <div className="flex flex-wrap gap-2">
                     {w.status === "pending" && <Button size="sm" onClick={() => act(w.id, "approved")}>Aprobar</Button>}
                     {w.status === "approved" && <Button size="sm" onClick={() => act(w.id, "processing")}>Marcar procesando</Button>}
-                    {w.status === "processing" && <Button size="sm" onClick={() => act(w.id, "completed")}>Marcar completado</Button>}
+                    {w.status === "processing" && <span className="text-xs text-muted-foreground">Se completará cuando el proveedor de transferencias confirme el pago con su referencia (aún no conectado).</span>}
                     <Button size="sm" variant="destructive" onClick={() => act(w.id, "rejected")}>Rechazar</Button>
                   </div>
                 </>

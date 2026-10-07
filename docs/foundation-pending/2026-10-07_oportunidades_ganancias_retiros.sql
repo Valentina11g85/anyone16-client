@@ -13,13 +13,63 @@
 --   service_payout_methods  método de retiro (sin datos bancarios en claro; token del proveedor futuro).
 -- El navegador solo puede LEER lo suyo y llamar RPCs; ninguna tabla tiene INSERT/UPDATE/DELETE para authenticated.
 
--- 0. Parámetros ------------------------------------------------------------------
--- Período de seguridad antes de que una ganancia pase a disponible (horas).
-CREATE OR REPLACE FUNCTION public.service_earnings_hold_hours()
-RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 72 $$;
--- Comisión por retiro (hoy 0). Se calcula SIEMPRE en el servidor.
+-- 0. Configuración financiera (editable solo por admin vía RPC) ----------------------
+-- Fila '*' = valores por defecto; se puede añadir una fila por moneda (p. ej. 'COP').
+CREATE TABLE IF NOT EXISTS public.service_finance_config (
+  currency_code text PRIMARY KEY CHECK (currency_code = '*' OR char_length(currency_code) = 3),
+  hold_hours integer NOT NULL DEFAULT 72 CHECK (hold_hours BETWEEN 0 AND 8760),
+  withdrawal_fee_fixed numeric(18,2) NOT NULL DEFAULT 0 CHECK (withdrawal_fee_fixed >= 0),
+  withdrawal_fee_percent numeric(5,2) NOT NULL DEFAULT 0 CHECK (withdrawal_fee_percent BETWEEN 0 AND 100),
+  min_withdrawal numeric(18,2) NOT NULL DEFAULT 0 CHECK (min_withdrawal >= 0),
+  max_withdrawal numeric(18,2) CHECK (max_withdrawal IS NULL OR max_withdrawal > 0),  -- NULL = sin límite
+  updated_by_profile_id uuid REFERENCES public.profiles(id),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (max_withdrawal IS NULL OR max_withdrawal >= min_withdrawal)
+);
+INSERT INTO public.service_finance_config(currency_code) VALUES ('*') ON CONFLICT DO NOTHING;
+GRANT SELECT ON public.service_finance_config TO authenticated;   -- lectura: mostrar mínimos/comisión
+GRANT ALL ON public.service_finance_config TO service_role;
+ALTER TABLE public.service_finance_config ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_finance_config_read ON public.service_finance_config;
+CREATE POLICY service_finance_config_read ON public.service_finance_config FOR SELECT TO authenticated USING (true);
+
+CREATE OR REPLACE FUNCTION public.service_finance_cfg(_currency text)
+RETURNS public.service_finance_config LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT * FROM public.service_finance_config
+  WHERE currency_code IN (upper(_currency), '*')
+  ORDER BY (currency_code = '*') LIMIT 1
+$$;
+REVOKE ALL ON FUNCTION public.service_finance_cfg(text) FROM PUBLIC, anon, authenticated;
+
+-- Comisión por retiro calculada SIEMPRE en el servidor a partir de la configuración.
 CREATE OR REPLACE FUNCTION public.service_withdrawal_fee(_amount numeric, _currency text)
-RETURNS numeric LANGUAGE sql IMMUTABLE AS $$ SELECT 0::numeric $$;
+RETURNS numeric LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT round(cfg.withdrawal_fee_fixed + _amount * cfg.withdrawal_fee_percent / 100, 2)
+  FROM public.service_finance_cfg(_currency) cfg
+$$;
+REVOKE ALL ON FUNCTION public.service_withdrawal_fee(numeric, text) FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.admin_set_service_finance_config(
+  _currency text, _hold_hours integer, _fee_fixed numeric, _fee_percent numeric,
+  _min numeric, _max numeric)
+RETURNS public.service_finance_config LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE r public.service_finance_config; cur text := CASE WHEN _currency = '*' THEN '*' ELSE upper(_currency) END;
+BEGIN
+  IF NOT public.is_payment_admin() THEN RAISE EXCEPTION 'admin_only' USING ERRCODE = '42501'; END IF;
+  INSERT INTO public.service_finance_config(currency_code, hold_hours, withdrawal_fee_fixed,
+    withdrawal_fee_percent, min_withdrawal, max_withdrawal, updated_by_profile_id, updated_at)
+  VALUES (cur, _hold_hours, _fee_fixed, _fee_percent, _min, _max, public.current_profile_id(), now())
+  ON CONFLICT (currency_code) DO UPDATE SET hold_hours = EXCLUDED.hold_hours,
+    withdrawal_fee_fixed = EXCLUDED.withdrawal_fee_fixed, withdrawal_fee_percent = EXCLUDED.withdrawal_fee_percent,
+    min_withdrawal = EXCLUDED.min_withdrawal, max_withdrawal = EXCLUDED.max_withdrawal,
+    updated_by_profile_id = EXCLUDED.updated_by_profile_id, updated_at = now()
+  RETURNING * INTO r;
+  PERFORM public.payment_audit('service_finance_config_updated', public.current_profile_id(),
+    'service_finance_config', NULL, to_jsonb(r));
+  RETURN r;
+END $$;
+REVOKE ALL ON FUNCTION public.admin_set_service_finance_config(text, integer, numeric, numeric, numeric, numeric) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_set_service_finance_config(text, integer, numeric, numeric, numeric, numeric) TO authenticated;
 
 -- 1. Tablas ----------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.service_payout_methods (
@@ -42,7 +92,7 @@ CREATE INDEX IF NOT EXISTS service_payout_methods_profile_idx ON public.service_
 CREATE TABLE IF NOT EXISTS public.service_earnings (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   service_contract_id uuid NOT NULL UNIQUE REFERENCES public.service_contracts(id),
-  payment_order_id uuid NOT NULL REFERENCES public.payment_orders(id),
+  payment_order_id uuid NOT NULL UNIQUE REFERENCES public.payment_orders(id),
   provider_profile_id uuid NOT NULL REFERENCES public.profiles(id),
   buyer_profile_id uuid NOT NULL REFERENCES public.profiles(id),
   gross_amount numeric(18,2) NOT NULL CHECK (gross_amount >= 0),
@@ -85,7 +135,9 @@ CREATE TABLE IF NOT EXISTS public.service_withdrawals (
   UNIQUE (profile_id, idempotency_key),
   CHECK (net_amount = amount - fee),
   CHECK (status <> 'rejected' OR rejection_reason IS NOT NULL),
-  CHECK (status <> 'completed' OR completed_at IS NOT NULL)
+  -- "Completado" exige una transferencia real confirmada por un proveedor de payouts.
+  CHECK (status <> 'completed' OR (completed_at IS NOT NULL AND external_reference IS NOT NULL
+                                   AND payout_provider <> 'unconfigured'))
 );
 CREATE INDEX IF NOT EXISTS service_withdrawals_profile_idx
   ON public.service_withdrawals (profile_id, created_at DESC);
@@ -128,6 +180,34 @@ DROP TRIGGER IF EXISTS service_ledger_no_update ON public.service_ledger;
 CREATE TRIGGER service_ledger_no_update BEFORE UPDATE OR DELETE ON public.service_ledger
 FOR EACH ROW EXECUTE FUNCTION public.service_ledger_immutable();
 
+-- Los montos de una ganancia o un retiro nunca cambian; solo su estado y fechas.
+CREATE OR REPLACE FUNCTION public.service_money_immutable()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN RAISE EXCEPTION 'financial_rows_are_permanent' USING ERRCODE = '42501'; END IF;
+  IF TG_TABLE_NAME = 'service_earnings' AND (
+       NEW.gross_amount IS DISTINCT FROM OLD.gross_amount OR NEW.net_amount IS DISTINCT FROM OLD.net_amount
+    OR NEW.platform_fee IS DISTINCT FROM OLD.platform_fee OR NEW.currency_code IS DISTINCT FROM OLD.currency_code
+    OR NEW.provider_profile_id IS DISTINCT FROM OLD.provider_profile_id
+    OR NEW.service_contract_id IS DISTINCT FROM OLD.service_contract_id
+    OR NEW.payment_order_id IS DISTINCT FROM OLD.payment_order_id) THEN
+    RAISE EXCEPTION 'earning_amounts_are_immutable' USING ERRCODE = '42501';
+  END IF;
+  IF TG_TABLE_NAME = 'service_withdrawals' AND (
+       NEW.amount IS DISTINCT FROM OLD.amount OR NEW.fee IS DISTINCT FROM OLD.fee
+    OR NEW.net_amount IS DISTINCT FROM OLD.net_amount OR NEW.currency_code IS DISTINCT FROM OLD.currency_code
+    OR NEW.profile_id IS DISTINCT FROM OLD.profile_id OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key) THEN
+    RAISE EXCEPTION 'withdrawal_amounts_are_immutable' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS service_earnings_immutable_trg ON public.service_earnings;
+CREATE TRIGGER service_earnings_immutable_trg BEFORE UPDATE OR DELETE ON public.service_earnings
+FOR EACH ROW EXECUTE FUNCTION public.service_money_immutable();
+DROP TRIGGER IF EXISTS service_withdrawals_immutable_trg ON public.service_withdrawals;
+CREATE TRIGGER service_withdrawals_immutable_trg BEFORE UPDATE OR DELETE ON public.service_withdrawals
+FOR EACH ROW EXECUTE FUNCTION public.service_money_immutable();
+
 -- 2. Permisos y RLS: solo lectura de lo propio (o admin) ---------------------------
 GRANT SELECT ON public.service_earnings, public.service_withdrawals, public.service_ledger TO authenticated;
 GRANT ALL ON public.service_earnings, public.service_withdrawals, public.service_ledger,
@@ -165,7 +245,7 @@ REVOKE ALL ON FUNCTION public.service_finance_notify(uuid, text, text, text) FRO
 -- 4. Alta de la ganancia: contrato completado + orden pagada ------------------------
 CREATE OR REPLACE FUNCTION public.service_earning_ensure(_contract_id uuid)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE c public.service_contracts; o public.payment_orders;
+DECLARE c public.service_contracts; o public.payment_orders; new_id uuid;
 BEGIN
   SELECT * INTO c FROM public.service_contracts WHERE id = _contract_id;
   IF c.id IS NULL OR c.status <> 'completed' THEN RETURN; END IF;
@@ -177,8 +257,13 @@ BEGIN
     buyer_profile_id, gross_amount, platform_fee, net_amount, currency_code, available_at)
   VALUES (c.id, o.id, c.provider_profile_id, c.buyer_profile_id, o.subtotal,
     o.platform_fee + o.provider_fee, o.provider_payout, o.currency_code,
-    now() + make_interval(hours => public.service_earnings_hold_hours()))
-  ON CONFLICT (service_contract_id) DO NOTHING;
+    now() + make_interval(hours => (public.service_finance_cfg(o.currency_code)).hold_hours))
+  ON CONFLICT DO NOTHING            -- UNIQUE(service_contract_id) y UNIQUE(payment_order_id): imposible duplicar
+  RETURNING id INTO new_id;
+  IF new_id IS NOT NULL THEN
+    PERFORM public.payment_audit('service_earning_created', NULL, 'service_earning', new_id,
+      jsonb_build_object('contract', c.id, 'payment_order', o.id));
+  END IF;
 END $$;
 REVOKE ALL ON FUNCTION public.service_earning_ensure(uuid) FROM PUBLIC, anon, authenticated;
 
@@ -250,6 +335,7 @@ BEGIN
     END IF;
     PERFORM public.service_finance_notify(e.provider_profile_id, 'service_earning_available',
       'Nueva ganancia disponible', e.net_amount || ' ' || e.currency_code);
+    PERFORM public.payment_audit('service_earning_released', NULL, 'service_earning', e.id, '{}'::jsonb);
     n := n + 1;
   END LOOP;
   RETURN n;
@@ -260,7 +346,7 @@ GRANT EXECUTE ON FUNCTION public.service_release_due_earnings(uuid) TO service_r
 -- 6. Lecturas seguras ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.get_my_service_balance()
 RETURNS TABLE (currency_code text, available numeric, pending numeric, total_earned numeric,
-               total_withdrawn numeric, in_withdrawal numeric)
+               total_withdrawn numeric, in_withdrawal numeric, debt numeric)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE me uuid := public.current_profile_id();
 BEGIN
@@ -271,9 +357,14 @@ BEGIN
     SELECT se.currency_code FROM public.service_earnings se WHERE se.provider_profile_id = me
     UNION SELECT w.currency_code FROM public.service_withdrawals w WHERE w.profile_id = me
   )
+  , led AS (
+    SELECT cur.currency_code AS cc,
+      coalesce((SELECT sum(l.amount) FROM public.service_ledger l
+                WHERE l.profile_id = me AND l.currency_code = cur.currency_code), 0)::numeric AS bal
+    FROM cur
+  )
   SELECT cur.currency_code,
-    coalesce((SELECT sum(l.amount) FROM public.service_ledger l
-              WHERE l.profile_id = me AND l.currency_code = cur.currency_code), 0)::numeric,
+    greatest(led.bal, 0),
     coalesce((SELECT sum(se.net_amount) FROM public.service_earnings se
               WHERE se.provider_profile_id = me AND se.currency_code = cur.currency_code
                 AND se.status = 'pending'), 0)::numeric,
@@ -285,8 +376,9 @@ BEGIN
                 AND w.status = 'completed'), 0)::numeric,
     coalesce((SELECT sum(w.amount) FROM public.service_withdrawals w
               WHERE w.profile_id = me AND w.currency_code = cur.currency_code
-                AND w.status IN ('pending', 'approved', 'processing')), 0)::numeric
-  FROM cur;
+                AND w.status IN ('pending', 'approved', 'processing')), 0)::numeric,
+    greatest(-led.bal, 0)            -- deuda: reversión posterior a un retiro; se compensa con futuras ganancias
+  FROM cur JOIN led ON led.cc = cur.currency_code;
 END $$;
 REVOKE ALL ON FUNCTION public.get_my_service_balance() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_my_service_balance() TO authenticated;
@@ -356,6 +448,13 @@ BEGIN
    WHERE profile_id = me AND currency_code = upper(_currency);
   IF amt > avail THEN RAISE EXCEPTION 'amount_exceeds_available' USING ERRCODE = '22023'; END IF;
 
+  IF amt < (public.service_finance_cfg(_currency)).min_withdrawal THEN
+    RAISE EXCEPTION 'amount_below_minimum' USING ERRCODE = '22023';
+  END IF;
+  IF (public.service_finance_cfg(_currency)).max_withdrawal IS NOT NULL
+     AND amt > (public.service_finance_cfg(_currency)).max_withdrawal THEN
+    RAISE EXCEPTION 'amount_above_maximum' USING ERRCODE = '22023';
+  END IF;
   fee := round(public.service_withdrawal_fee(amt, upper(_currency)), 2);
   IF amt - fee <= 0 THEN RAISE EXCEPTION 'amount_below_fee' USING ERRCODE = '22023'; END IF;
 
@@ -394,7 +493,9 @@ REVOKE ALL ON FUNCTION public.cancel_my_service_withdrawal(uuid) FROM PUBLIC, an
 GRANT EXECUTE ON FUNCTION public.cancel_my_service_withdrawal(uuid) TO authenticated;
 
 -- 10. Administración (sin pagos reales) ------------------------------------------
---  pending → approved | rejected ; approved → processing | rejected ; processing → completed | rejected
+--  pending → approved | rejected ; approved → processing | rejected ; processing → rejected
+--  "completed" NO lo puede marcar un administrador: solo record_service_payout_completed (service_role),
+--  que llamará la futura integración del proveedor de payouts con su referencia real.
 CREATE OR REPLACE FUNCTION public.admin_transition_service_withdrawal(
   _withdrawal_id uuid, _status text, _reason text DEFAULT NULL, _reference text DEFAULT NULL)
 RETURNS public.service_withdrawals
@@ -407,7 +508,7 @@ BEGIN
   IF NOT (
        (w.status = 'pending' AND _status IN ('approved', 'rejected'))
     OR (w.status = 'approved' AND _status IN ('processing', 'rejected'))
-    OR (w.status = 'processing' AND _status IN ('completed', 'rejected'))
+    OR (w.status = 'processing' AND _status = 'rejected')
   ) THEN
     RAISE EXCEPTION 'invalid_transition % -> %', w.status, _status USING ERRCODE = '22023';
   END IF;
@@ -420,7 +521,6 @@ BEGIN
     rejection_reason = CASE WHEN _status = 'rejected' THEN left(trim(_reason), 500) ELSE rejection_reason END,
     external_reference = coalesce(nullif(trim(coalesce(_reference, '')), ''), external_reference),
     processed_at = CASE WHEN _status = 'processing' THEN now() ELSE processed_at END,
-    completed_at = CASE WHEN _status = 'completed' THEN now() ELSE completed_at END,
     updated_at = now()
   WHERE id = w.id RETURNING * INTO w;
 
@@ -429,11 +529,9 @@ BEGIN
     VALUES (w.profile_id, w.currency_code, 'withdrawal_released', w.amount, w.id);
   END IF;
 
-  IF _status IN ('processing', 'completed', 'rejected') THEN
+  IF _status IN ('processing', 'rejected') THEN
     PERFORM public.service_finance_notify(w.profile_id, 'service_withdrawal_' || _status,
-      CASE _status WHEN 'processing' THEN 'Retiro en proceso'
-                   WHEN 'completed' THEN 'Retiro completado'
-                   ELSE 'Retiro rechazado' END,
+      CASE _status WHEN 'processing' THEN 'Retiro en proceso' ELSE 'Retiro rechazado' END,
       CASE WHEN _status = 'rejected' THEN left(trim(_reason), 200) ELSE w.amount || ' ' || w.currency_code END);
   END IF;
   PERFORM public.payment_audit('service_withdrawal_' || _status, me, 'service_withdrawal', w.id,
@@ -442,6 +540,38 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.admin_transition_service_withdrawal(uuid, text, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_transition_service_withdrawal(uuid, text, text, text) TO authenticated;
+
+-- 10b. Completar un retiro: SOLO con confirmación real del proveedor de payouts --------
+-- No está concedida a usuarios ni administradores. La invocará la futura integración
+-- (servidor con service_role) tras verificar la transferencia con el proveedor.
+CREATE OR REPLACE FUNCTION public.record_service_payout_completed(
+  _withdrawal_id uuid, _payout_provider text, _external_reference text)
+RETURNS public.service_withdrawals
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE w public.service_withdrawals;
+BEGIN
+  IF coalesce(trim(_payout_provider), '') IN ('', 'unconfigured') OR coalesce(trim(_external_reference), '') = '' THEN
+    RAISE EXCEPTION 'real_payout_reference_required' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO w FROM public.service_withdrawals WHERE id = _withdrawal_id FOR UPDATE;
+  IF w.id IS NULL THEN RAISE EXCEPTION 'withdrawal_not_found' USING ERRCODE = 'P0002'; END IF;
+  IF w.status = 'completed' THEN RETURN w; END IF;          -- idempotente ante reintentos del proveedor
+  IF w.status <> 'processing' THEN RAISE EXCEPTION 'invalid_transition % -> completed', w.status USING ERRCODE = '22023'; END IF;
+  UPDATE public.service_withdrawals SET status = 'completed', payout_provider = trim(_payout_provider),
+    external_reference = trim(_external_reference), completed_at = now(), updated_at = now()
+  WHERE id = w.id RETURNING * INTO w;
+  PERFORM public.service_finance_notify(w.profile_id, 'service_withdrawal_completed', 'Retiro completado',
+    w.net_amount || ' ' || w.currency_code);
+  PERFORM public.payment_audit('service_withdrawal_completed', NULL, 'service_withdrawal', w.id,
+    jsonb_build_object('provider', w.payout_provider, 'reference', w.external_reference));
+  RETURN w;
+END $$;
+REVOKE ALL ON FUNCTION public.record_service_payout_completed(uuid, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_service_payout_completed(uuid, text, text) TO service_role;
+
+-- Funciones de trigger: nadie las llama directamente.
+REVOKE ALL ON FUNCTION public.service_earnings_on_contract() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.service_earnings_on_order() FROM PUBLIC, anon, authenticated;
 
 -- 11. Contrataciones ya completadas y pagadas antes de esta migración ----------------
 SELECT public.service_earning_ensure(c.id)

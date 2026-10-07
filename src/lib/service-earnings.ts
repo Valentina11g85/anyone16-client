@@ -40,6 +40,8 @@ const MESSAGES: Record<string, string> = {
   admin_only: "Solo un administrador puede hacer esto.",
   rejection_reason_required: "Escribe un motivo de al menos 5 caracteres.",
   invalid_transition: "Ese cambio de estado no está permitido.",
+  amount_below_minimum: "El monto es menor que el mínimo de retiro.",
+  amount_above_maximum: "El monto supera el máximo permitido por retiro.",
 };
 const isMissing = (e: PgError) => ["PGRST202", "PGRST205", "42P01", "42883"].includes(e.code ?? "");
 function toError(e: PgError) {
@@ -55,6 +57,8 @@ export type ServiceBalance = {
   totalEarned: number;
   totalWithdrawn: number;
   inWithdrawal: number;
+  /** Reversal after funds were withdrawn; offset by future earnings. */
+  debt: number;
 };
 export type EarningStatus = "pending" | "available" | "reversed";
 export type ServiceEarning = {
@@ -188,6 +192,7 @@ export async function loadEarnings(myProfileId: string): Promise<EarningsSnapsho
       totalEarned: num(r["total_earned"]),
       totalWithdrawn: num(r["total_withdrawn"]),
       inWithdrawal: num(r["in_withdrawal"]),
+      debt: num(r["debt"]),
     })),
     earnings: earnings.filter((e) => e.provider === myProfileId),
     withdrawals: withdrawals.filter((w) => w.profileId === myProfileId),
@@ -266,7 +271,7 @@ export async function loadAllWithdrawals() {
 
 export async function adminTransitionWithdrawal(
   id: string,
-  status: "approved" | "processing" | "completed" | "rejected",
+  status: "approved" | "processing" | "rejected",
   reason?: string,
   reference?: string,
 ) {
