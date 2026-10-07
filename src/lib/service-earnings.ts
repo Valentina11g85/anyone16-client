@@ -31,6 +31,7 @@ const MESSAGES: Record<string, string> = {
   not_authenticated: "Inicia sesión para continuar.",
   amount_must_be_positive: "El monto debe ser mayor que cero.",
   amount_exceeds_available: "El monto supera tu saldo disponible.",
+  negative_balance_blocks_withdrawal: "Tienes un saldo pendiente por compensar de un reembolso. Podrás retirar cuando tus próximas ganancias lo cubran.",
   amount_below_fee: "El monto no cubre la comisión del retiro.",
   payout_method_not_found: "Elige un método de retiro válido.",
   idempotency_key_required: "No se pudo identificar la solicitud. Inténtalo de nuevo.",

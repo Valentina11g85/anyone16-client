@@ -3,6 +3,7 @@
 -- Requiere: 2026-09-29_oportunidades_negociacion.sql, 2026-09-29_oportunidades_cierre.sql,
 --           2026-09-29_payment_foundation.sql (payment_orders, is_payment_admin, payment_audit).
 --
+-- Re-ejecutar NO crea ganancias: el historial se procesa solo con la sección 11 (manual).
 -- Aditivo y re-ejecutable. No borra datos, no toca Favores, ni el webhook de Mercado Pago,
 -- ni payment_orders (solo añade triggers AFTER que leen su estado). No conecta payouts reales.
 --
@@ -821,7 +822,7 @@ BEGIN
   FOR c IN SELECT contract_id FROM public.service_earnings_backfill_report() WHERE qualifies LOOP
     IF public.service_earning_ensure(c.contract_id) THEN created := created + 1; END IF;
   END LOOP;
-  PERFORM public.payment_audit('service_earnings_backfill', NULL, 'service_earnings', NULL,
+  PERFORM public.payment_audit('service_earnings_backfill', NULL, 'service_earnings_backfill', gen_random_uuid(),
     jsonb_build_object('expected', _expected_count, 'created', created));
   RETURN created;
 END $$;
