@@ -29,7 +29,7 @@ $$;
 REVOKE ALL ON FUNCTION public.has_required_legal_acceptances() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.has_required_legal_acceptances() TO authenticated;
 
--- has_required_legal(uuid) no debe servir para consultar el estado de otras personas.
+-- (has_required_legal(uuid) ya no se concede a authenticated en el SQL legal; se reafirma aquí.)
 REVOKE EXECUTE ON FUNCTION public.has_required_legal(uuid) FROM authenticated;
 
 -- 2. Trigger transversal --------------------------------------------------------------
