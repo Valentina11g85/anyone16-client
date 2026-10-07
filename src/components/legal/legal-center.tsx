@@ -149,7 +149,7 @@ function MyAcceptances({ versions, onOpen }: { versions: LegalVersion[]; onOpen:
   };
   const label: Record<string, string> = {
     terms: "Términos y condiciones", privacy_policy: "Política de privacidad", data_treatment: "Tratamiento de datos",
-    marketing: "Comunicaciones comerciales", location: "Ubicación",
+    marketing: "Comunicaciones comerciales", location: "Ubicación", age_confirmation: "Mayoría de edad (18+)",
   };
   return (
     <div className="mt-5 space-y-4">
