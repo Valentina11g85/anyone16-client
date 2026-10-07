@@ -35,7 +35,9 @@ import { subscribeLive } from "@/lib/realtime";
 import { requestOpportunityFocus, sectionForType } from "@/lib/opportunities-focus";
 import { getPaymentState, refreshPayments, usePayments } from "@/lib/payment-store";
 
-export type NotificationTarget = "favors" | "opportunities" | "worker-offers";
+export type NotificationTarget = "favors" | "opportunities" | "worker-offers" | "earnings";
+
+const isFinanceType = (t: string) => t.startsWith("service_earning") || t.startsWith("service_withdrawal");
 
 /** Keeps notifications fresh while signed in (reload + 30 s polling). */
 export function useNotificationsSync() {
@@ -117,6 +119,11 @@ export function NotificationsCenter({
     if (n.relatedPaymentOrderId) {
       setPaymentId(n.relatedPaymentOrderId);
       void refreshPayments();
+      return;
+    }
+    if (isFinanceType(n.type)) {
+      onOpenChange(false);
+      onNavigate("earnings");
       return;
     }
     if (n.relatedServiceListingId || n.relatedServiceOfferId || n.type.startsWith("service")) {
@@ -273,7 +280,7 @@ const FAMILY: Record<Family, { icon: LucideIcon; tone: string }> = {
 function familyOf(type: string): Family {
   const t = type.toLowerCase();
   if (t.includes("disput") || t.includes("security") || t.includes("fraud")) return "security";
-  if (t.startsWith("payment")) return "payment";
+  if (t.startsWith("payment") || isFinanceType(t)) return "payment";
   if (t.startsWith("service_offer") || t === "service_counter_offer" || t.includes("offer")) return "proposal";
   if (t.startsWith("service_contract")) return "contract";
   if (t.startsWith("service_review") || t.includes("review") || t.includes("rating")) return "review";
@@ -290,6 +297,7 @@ function toneOf(type: string, fam: Family) {
 
 function actionLabel(n: AppNotification): string | null {
   if (n.relatedPaymentOrderId) return "Ver pago";
+  if (isFinanceType(n.type)) return "Ver ganancias";
   if (n.type.startsWith("service_contract") || n.type === "service_offer_accepted") return "Ver contratación";
   if (n.type.startsWith("service_review")) return "Ver calificación";
   if (n.type.startsWith("service_message")) return "Abrir chat";
