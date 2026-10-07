@@ -3,6 +3,9 @@
  * One account per person; the worker mode is activated later from the profile.
  */
 
+import { LegalCenter } from "@/components/legal/legal-center";
+import type { LegalDocType } from "@/content/legal/drafts";
+import { saveSignupIntent } from "@/lib/legal";
 import { useState } from "react";
 import { ChevronRight, LockKeyhole, Mail, Smartphone, UserRound } from "lucide-react";
 
@@ -41,6 +44,10 @@ export function AuthScreen({
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
+  const [acceptTerms, setAcceptTerms] = useState(false);
+  const [acceptData, setAcceptData] = useState(false);
+  const [marketing, setMarketing] = useState(false);
+  const [legalDoc, setLegalDoc] = useState<LegalDocType | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -52,6 +59,9 @@ export function AuthScreen({
     setNotice(null);
     try {
       if (mode === "signup") {
+        if (!acceptTerms || !acceptData) throw new Error("legal_required");
+        // Only an intent: Foundation records the acceptance on the first signed-in session.
+        saveSignupIntent({ email: email.trim(), marketing, at: new Date().toISOString() });
         const result = await signUp({
           fullName,
           email,
@@ -165,6 +175,22 @@ export function AuthScreen({
             </div>
           </div>
         )}
+        {mode === "signup" && (
+          <div className="space-y-2.5 text-sm text-muted-foreground">
+            <label className="flex items-start gap-3">
+              <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} required />
+              <span>Acepto los <button type="button" className="font-bold text-primary underline" onClick={() => setLegalDoc("terms")}>Términos y condiciones</button> y reconozco la <button type="button" className="font-bold text-primary underline" onClick={() => setLegalDoc("privacy_policy")}>Política de privacidad</button>.</span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]" checked={acceptData} onChange={(e) => setAcceptData(e.target.checked)} required />
+              <span>Autorizo el <button type="button" className="font-bold text-primary underline" onClick={() => setLegalDoc("data_treatment")}>tratamiento de mis datos personales</button>. Soy mayor de 18 años.</span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} />
+              <span>Quiero recibir novedades y comunicaciones comerciales (opcional).</span>
+            </label>
+          </div>
+        )}
         {mode === "login" && (
           <label className="flex items-center gap-3 text-sm font-medium text-muted-foreground">
             <input
@@ -222,6 +248,7 @@ export function AuthScreen({
           </Button>
         )}
       </div>
+      <LegalCenter open={Boolean(legalDoc)} onOpenChange={(o) => !o && setLegalDoc(null)} initialDoc={legalDoc ?? undefined} />
     </Shell>
   );
 }

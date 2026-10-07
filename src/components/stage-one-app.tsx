@@ -801,7 +801,12 @@ function AppRoot() {
 
   if (!profile) return <Splash label="Preparando tu cuenta…" />;
 
-  const overlay = transition ? <ModeTransition label={transition} /> : null;
+  const overlay = (
+    <>
+      {transition ? <ModeTransition label={transition} /> : null}
+      <LegalGate email={profile.email} />
+    </>
+  );
 
   if (activating && !worker) {
     return (
