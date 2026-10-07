@@ -11,3 +11,4 @@
 
 - Oportunidades listing media lives in the private Foundation bucket `service-listing-media` (path `<profile>/<listing>/<kind>/<file>`); rows store `lm:<path>` refs and the UI resolves signed URLs — never store file data in listing rows.
 - Notification deep links go through `src/lib/opportunities-focus.ts` using notification IDs, resolved only against RLS-loaded data.
+- Oportunidades earnings/withdrawals: balances come only from Foundation (ledger `service_ledger`, RPC `get_my_service_balance`); browser never computes or writes balances — every write is a Foundation RPC (pending SQL in docs/foundation-pending/2026-10-07_oportunidades_ganancias_retiros.sql). Why: money must be server-authoritative and reconstructable.
