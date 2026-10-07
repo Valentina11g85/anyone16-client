@@ -66,6 +66,7 @@ import { WorkerOnboarding } from "@/components/worker/worker-onboarding";
 import { publishFavor } from "@/lib/marketplace-store";
 import { AuthProvider, useAuth, type AppMode } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
+import { LegalGate } from "@/components/legal/legal-gate";
 import { BellButton, NotificationsCenter, useNotificationsSync } from "@/components/notifications/notifications-center";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

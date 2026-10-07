@@ -46,6 +46,8 @@ import { AdminTrust } from "@/components/trust/admin-trust";
 import { PaymentsHistory } from "@/components/payments/payments-history";
 import { AdminPaymentSummary, MyEarnings, MyPayments } from "@/components/payments/my-payments";
 import { AdminWithdrawals, EarningsPanel } from "@/components/opportunities/earnings-panel";
+import { LegalCenter } from "@/components/legal/legal-center";
+import { AdminLegal } from "@/components/legal/admin-legal";
 import { UnifiedHistory } from "@/components/history/unified-history";
 import { TrustSafetyCenter } from "@/components/trust/trust-safety-center";
 import { reviewsFor, useOpportunities } from "@/lib/opportunities-store";
@@ -105,6 +107,7 @@ export function ProfileScreen({
   const opps = useOpportunities();
   const trust = useTrust();
   const [trustOpen, setTrustOpen] = useState(false);
+  const [legalOpen, setLegalOpen] = useState(false);
 
   const favorTitles = Object.fromEntries(
     marketplace.favors.map((favor) => [favor.id, favor.description || "Favor"]),
@@ -367,6 +370,7 @@ export function ProfileScreen({
           <FeeConfigAdmin />
           <AdminTrust languageCode={profile.languageCode} adminProfileId={profile.id} />
           <AdminWithdrawals />
+          <AdminLegal />
         </div>
       </div>
 
@@ -473,6 +477,18 @@ export function ProfileScreen({
           El idioma, la moneda y el país son independientes entre sí. Ahora: {language?.name ?? profile.languageCode} · {currency ? formatCurrencyName(currency) : profile.currencyCode} · {country?.name ?? profile.countryCode}
         </p>
       </div>
+
+      <button type="button" className="uv-console-row pf-mini mt-3 flex w-full items-center justify-between gap-4 text-left" onClick={() => setLegalOpen(true)}>
+        <span className="flex items-center gap-3">
+          <span className="pf-tile-icon"><ShieldCheck strokeWidth={1.7} /></span>
+          <span>
+            <span className="block font-bold text-foreground">Legal y privacidad</span>
+            <span className="text-xs text-muted-foreground">Términos, privacidad, tus datos y tu cuenta.</span>
+          </span>
+        </span>
+        <ChevronRight className="size-4 text-muted-foreground" />
+      </button>
+      <LegalCenter open={legalOpen} onOpenChange={setLegalOpen} />
 
       <button type="button" className="pf-signout mt-10" onClick={() => void signOut()}>
         <LogOut className="size-4" /> Cerrar sesión
