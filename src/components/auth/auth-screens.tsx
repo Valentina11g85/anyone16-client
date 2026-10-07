@@ -5,7 +5,6 @@
 
 import { LegalCenter } from "@/components/legal/legal-center";
 import type { LegalDocType } from "@/content/legal/drafts";
-import { saveSignupIntent } from "@/lib/legal";
 import { useState } from "react";
 import { ChevronRight, LockKeyhole, Mail, Smartphone, UserRound } from "lucide-react";
 
@@ -61,8 +60,7 @@ export function AuthScreen({
     try {
       if (mode === "signup") {
         if (!acceptTerms || !acceptData) throw new Error("legal_required");
-        // Only an intent: Foundation records the acceptance on the first signed-in session.
-        saveSignupIntent({ email: email.trim(), marketing, at: new Date().toISOString() });
+        // Sent with the account creation; Foundation records it server-side with the profile.
         const result = await signUp({
           fullName,
           email,
@@ -71,6 +69,7 @@ export function AuthScreen({
           countryCode: preferences.countryCode,
           languageCode: preferences.languageCode,
           currencyCode: preferences.currencyCode,
+          consents: { acceptTerms, acceptDataAndAge: acceptData, marketing },
         });
         if (result.needsConfirmation) {
           setNotice(
