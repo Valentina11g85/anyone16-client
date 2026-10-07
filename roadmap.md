@@ -8,3 +8,4 @@
 - [ ] Foundation: ejecutar docs/foundation-pending/2026-10-04_oportunidades_media_storage.sql (bucket privado de fotos/portafolio)
 - [ ] Ejecutar en Foundation 2026-10-07_oportunidades_ganancias_retiros.sql (ganancias y retiros) — lo ejecuta el usuario.
 - [ ] Conectar proveedor de payouts (futuro).
+- [ ] Ejecutar en Foundation 2026-10-07_legal_privacidad.sql y publicar v1.0 tras revisión de abogado — usuario/abogado.
