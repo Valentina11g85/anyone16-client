@@ -202,6 +202,7 @@ RETURNS SETOF public.legal_document_versions
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT v.* FROM public.legal_document_versions v
   WHERE v.status = 'published' AND v.requires_acceptance
+    AND v.document_type IN ('terms', 'privacy_policy', 'data_treatment')
     AND v.language = _language AND v.jurisdiction = _jurisdiction
     AND public.current_profile_id() IS NOT NULL
     AND NOT EXISTS (
