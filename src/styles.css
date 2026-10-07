@@ -2753,7 +2753,7 @@ html[data-uv-perf="high"] .pf nav.pf-nav { translate: 0 0; }
   box-shadow: 0 0 0 4px var(--background), 0 0 14px -2px color-mix(in oklab, var(--tc) 70%, transparent);
   & svg { width: 0.85rem; height: 0.85rem; }
 }
-.hx-item[data-tone="progress"] .hx-dot svg { animation: spin 2.4s linear infinite; }
+.hx-item[data-tone="progress"] .hx-dot svg { animation: hx-spin 2.4s linear infinite; }
 .hx-card {
   display: block; width: 100%; min-width: 0; text-align: left; padding: 1rem 1.1rem; border-radius: 1.25rem;
   background: linear-gradient(160deg, color-mix(in oklab, var(--card) 82%, transparent), color-mix(in oklab, var(--card) 60%, transparent));
@@ -2796,3 +2796,4 @@ html[data-uv-perf="high"] .pf nav.pf-nav { translate: 0 0; }
 @keyframes hx-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (min-width: 1024px) { .hx-filters { flex-wrap: wrap; overflow: visible; } }
 @media (prefers-reduced-motion: reduce) { .hx-item, .hx-groups, .hx-item[data-tone="progress"] .hx-dot svg { animation: none; } }
+@keyframes hx-spin { to { transform: rotate(360deg); } }
