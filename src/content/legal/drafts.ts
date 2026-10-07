@@ -247,7 +247,7 @@ PENDIENTE DE DEFINICIÓN: plazos de devolución según el proveedor de pagos y d
 El software de AnyOne¹⁶ (código fuente, código objeto, bases de datos, arquitectura, diseños, interfaces, textos propios y elementos gráficos) es una obra protegida por el derecho de autor (Ley 23 de 1982, Decisión Andina 351 de 1993). Su titular es ${OPERATOR.name}, salvo los componentes de terceros indicados en el inventario de licencias.
 
 ## Marca
-"AnyOne¹⁶" y sus logotipos se usan como signos distintivos. **A la fecha no constan como marcas registradas**; su registro está en preparación. No se debe usar el símbolo ® hasta obtener el registro.
+"AnyOne¹⁶" y sus logotipos se usan como signos distintivos. **A la fecha no constan como marcas registradas**; su registro está en preparación. No se debe usar el símbolo de marca registrada hasta obtener el registro.
 
 ## Software de terceros
 La aplicación usa componentes de código abierto bajo sus propias licencias (MIT, Apache-2.0, ISC, BSD y otras), que se respetan. El listado está disponible bajo solicitud.
