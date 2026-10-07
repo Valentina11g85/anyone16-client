@@ -26,6 +26,15 @@ CREATE TABLE IF NOT EXISTS public.service_finance_config (
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (max_withdrawal IS NULL OR max_withdrawal >= min_withdrawal)
 );
+-- Política de comisión ante reembolsos (documentada en la sección 4b):
+--   proportional        el proveedor pierde la parte proporcional de SU neto (refund / total cobrado);
+--                       la comisión de la plataforma se devuelve en la misma proporción.
+--   provider_bears_full el neto del proveedor se reduce por el monto reembolsado completo
+--                       (la plataforma conserva su comisión). Tope: nunca más que el neto.
+ALTER TABLE public.service_finance_config ADD COLUMN IF NOT EXISTS refund_fee_policy text NOT NULL DEFAULT 'proportional';
+ALTER TABLE public.service_finance_config DROP CONSTRAINT IF EXISTS service_finance_config_refund_policy_chk;
+ALTER TABLE public.service_finance_config ADD CONSTRAINT service_finance_config_refund_policy_chk
+  CHECK (refund_fee_policy IN ('proportional', 'provider_bears_full'));
 INSERT INTO public.service_finance_config(currency_code) VALUES ('*') ON CONFLICT DO NOTHING;
 GRANT SELECT ON public.service_finance_config TO authenticated;   -- lectura: mostrar mínimos/comisión
 GRANT ALL ON public.service_finance_config TO service_role;
@@ -144,29 +153,50 @@ CREATE INDEX IF NOT EXISTS service_withdrawals_profile_idx
 CREATE INDEX IF NOT EXISTS service_withdrawals_status_idx
   ON public.service_withdrawals (status, created_at);
 
+-- Reversiones (parciales o total) de una ganancia. Inmutables: nunca se edita la ganancia
+-- ni el movimiento original; cada reembolso crea su propia fila compensatoria.
+CREATE TABLE IF NOT EXISTS public.service_earning_reversals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  earning_id uuid NOT NULL REFERENCES public.service_earnings(id),
+  payment_refund_id uuid UNIQUE REFERENCES public.payment_refunds(id),  -- 1 reversión por reembolso
+  kind text NOT NULL CHECK (kind IN ('partial', 'full')),
+  refund_amount numeric(18,2) CHECK (refund_amount IS NULL OR refund_amount > 0),
+  net_reversed numeric(18,2) NOT NULL CHECK (net_reversed > 0),
+  fee_policy text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (kind = 'full' OR payment_refund_id IS NOT NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS service_earning_reversals_one_full
+  ON public.service_earning_reversals (earning_id) WHERE kind = 'full';
+CREATE INDEX IF NOT EXISTS service_earning_reversals_earning_idx ON public.service_earning_reversals (earning_id);
+
 CREATE TABLE IF NOT EXISTS public.service_ledger (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   profile_id uuid NOT NULL REFERENCES public.profiles(id),
   currency_code text NOT NULL CHECK (char_length(currency_code) = 3),
   entry_type text NOT NULL CHECK (entry_type IN (
     'earning_released',      -- + ganancia pasa a disponible
-    'earning_reversed',      -- - reembolso/reversión de una ganancia ya disponible
+    'earning_reversed',      -- - reembolso total: revierte lo que quedaba de una ganancia ya disponible
+    'earning_partially_reversed', -- - reembolso parcial proporcional de una ganancia ya disponible
     'withdrawal_hold',       -- - retiro solicitado (fondos reservados)
     'withdrawal_released')), -- + retiro rechazado/cancelado (fondos devueltos)
   amount numeric(18,2) NOT NULL CHECK (amount <> 0),
   earning_id uuid REFERENCES public.service_earnings(id),
+  reversal_id uuid UNIQUE REFERENCES public.service_earning_reversals(id),
   withdrawal_id uuid REFERENCES public.service_withdrawals(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
     (entry_type IN ('earning_released', 'withdrawal_released') AND amount > 0)
-    OR (entry_type IN ('earning_reversed', 'withdrawal_hold') AND amount < 0)),
+    OR (entry_type IN ('earning_reversed', 'earning_partially_reversed', 'withdrawal_hold') AND amount < 0)),
+  CHECK ((entry_type IN ('earning_reversed', 'earning_partially_reversed')) = (reversal_id IS NOT NULL)),
   CHECK (
     (entry_type LIKE 'earning_%' AND earning_id IS NOT NULL AND withdrawal_id IS NULL)
     OR (entry_type LIKE 'withdrawal_%' AND withdrawal_id IS NOT NULL AND earning_id IS NULL))
 );
 -- Cada evento se registra una sola vez.
 CREATE UNIQUE INDEX IF NOT EXISTS service_ledger_once_earning
-  ON public.service_ledger (earning_id, entry_type) WHERE earning_id IS NOT NULL;
+  ON public.service_ledger (earning_id, entry_type)
+  WHERE earning_id IS NOT NULL AND entry_type IN ('earning_released', 'earning_reversed');
 CREATE UNIQUE INDEX IF NOT EXISTS service_ledger_once_withdrawal
   ON public.service_ledger (withdrawal_id, entry_type) WHERE withdrawal_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS service_ledger_profile_idx
@@ -201,6 +231,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS service_earning_reversals_no_update ON public.service_earning_reversals;
+CREATE TRIGGER service_earning_reversals_no_update BEFORE UPDATE OR DELETE ON public.service_earning_reversals
+FOR EACH ROW EXECUTE FUNCTION public.service_ledger_immutable();
 DROP TRIGGER IF EXISTS service_earnings_immutable_trg ON public.service_earnings;
 CREATE TRIGGER service_earnings_immutable_trg BEFORE UPDATE OR DELETE ON public.service_earnings
 FOR EACH ROW EXECUTE FUNCTION public.service_money_immutable();
@@ -211,7 +244,13 @@ FOR EACH ROW EXECUTE FUNCTION public.service_money_immutable();
 -- 2. Permisos y RLS: solo lectura de lo propio (o admin) ---------------------------
 GRANT SELECT ON public.service_earnings, public.service_withdrawals, public.service_ledger TO authenticated;
 GRANT ALL ON public.service_earnings, public.service_withdrawals, public.service_ledger,
-  public.service_payout_methods TO service_role;
+  public.service_payout_methods, public.service_earning_reversals TO service_role;
+GRANT SELECT ON public.service_earning_reversals TO authenticated;
+ALTER TABLE public.service_earning_reversals ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_earning_reversals_read ON public.service_earning_reversals;
+CREATE POLICY service_earning_reversals_read ON public.service_earning_reversals FOR SELECT TO authenticated
+USING (public.is_payment_admin() OR EXISTS (SELECT 1 FROM public.service_earnings se
+  WHERE se.id = earning_id AND se.provider_profile_id = public.current_profile_id()));
 -- Métodos: sin provider_token para el navegador (permiso por columna).
 GRANT SELECT (id, profile_id, method_type, display_label, last4, provider, verification_status,
   is_default, archived_at, created_at, updated_at) ON public.service_payout_methods TO authenticated;
@@ -242,47 +281,170 @@ RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
 $$;
 REVOKE ALL ON FUNCTION public.service_finance_notify(uuid, text, text, text) FROM PUBLIC, anon, authenticated;
 
--- 4. Alta de la ganancia: contrato completado + orden pagada ------------------------
-CREATE OR REPLACE FUNCTION public.service_earning_ensure(_contract_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE c public.service_contracts; o public.payment_orders; new_id uuid;
+-- 4. Elegibilidad: única fuente de verdad para triggers, diagnóstico y backfill ------
+-- Una contratación genera dinero SOLO si TODO se cumple:
+--   contrato 'completed'; publicación y ambos perfiles NO demo; exactamente UNA orden de
+--   pago del contrato en 'paid' o 'partially_refunded'; comprador/proveedor/moneda de la
+--   orden coinciden con el contrato; orden confirmada por un proveedor real (payment_provider
+--   <> 'unconfigured', paid_at y external_payment_id presentes); existe la transacción
+--   'captured' de ese proveedor con ese mismo id externo y live_mode = true (no sandbox/test);
+--   la preferencia no está marcada mode = 'test'; montos coherentes.
+-- Cualquier caso ambiguo NO califica (se informa el motivo).
+CREATE OR REPLACE FUNCTION public.service_earning_eligibility(_contract_id uuid)
+RETURNS TABLE (contract_id uuid, qualifies boolean, reason text, payment_order_id uuid,
+  provider_profile_id uuid, buyer_profile_id uuid, gross_amount numeric, platform_fee numeric,
+  net_amount numeric, currency_code text, paid_at timestamptz)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+#variable_conflict use_column
+DECLARE c public.service_contracts; o public.payment_orders; n integer; why text; demo boolean;
 BEGIN
   SELECT * INTO c FROM public.service_contracts WHERE id = _contract_id;
-  IF c.id IS NULL OR c.status <> 'completed' THEN RETURN; END IF;
-  SELECT * INTO o FROM public.payment_orders
-   WHERE subject_type = 'service_contract' AND service_contract_id = c.id AND status = 'paid'
-   ORDER BY paid_at DESC NULLS LAST LIMIT 1;
-  IF o.id IS NULL THEN RETURN; END IF;
+  IF c.id IS NULL THEN
+    RETURN QUERY SELECT _contract_id, false, 'contract_not_found'::text, NULL::uuid, NULL::uuid, NULL::uuid,
+      NULL::numeric, NULL::numeric, NULL::numeric, NULL::text, NULL::timestamptz;
+    RETURN;
+  END IF;
+  IF c.status <> 'completed' THEN why := 'contract_' || c.status; END IF;
+
+  SELECT (l.is_demo OR bp.is_demo OR pp.is_demo) INTO demo
+  FROM public.service_listings l, public.profiles bp, public.profiles pp
+  WHERE l.id = c.service_listing_id AND bp.id = c.buyer_profile_id AND pp.id = c.provider_profile_id;
+  IF why IS NULL AND demo IS DISTINCT FROM false THEN why := 'demo_data'; END IF;
+
+  SELECT count(*) INTO n FROM public.payment_orders po
+  WHERE po.subject_type = 'service_contract' AND po.service_contract_id = c.id
+    AND po.status IN ('paid', 'partially_refunded');
+  SELECT * INTO o FROM public.payment_orders po
+  WHERE po.subject_type = 'service_contract' AND po.service_contract_id = c.id
+    AND po.status IN ('paid', 'partially_refunded')
+  ORDER BY po.paid_at DESC NULLS LAST LIMIT 1;
+  IF why IS NULL AND n = 0 THEN why := 'no_confirmed_payment';
+  ELSIF why IS NULL AND n > 1 THEN why := 'ambiguous_multiple_payments'; END IF;
+
+  IF why IS NULL AND (o.buyer_profile_id IS DISTINCT FROM c.buyer_profile_id
+                      OR o.provider_profile_id IS DISTINCT FROM c.provider_profile_id) THEN
+    why := 'payment_parties_mismatch';
+  END IF;
+  IF why IS NULL AND upper(o.currency_code) IS DISTINCT FROM upper(c.currency_code) THEN why := 'currency_mismatch'; END IF;
+  IF why IS NULL AND (o.paid_at IS NULL OR o.payment_provider = 'unconfigured' OR o.external_payment_id IS NULL) THEN
+    why := 'payment_not_provider_confirmed';
+  END IF;
+  IF why IS NULL AND NOT EXISTS (SELECT 1 FROM public.payment_transactions t
+      WHERE t.payment_order_id = o.id AND t.payment_provider = o.payment_provider
+        AND t.external_transaction_id = o.external_payment_id AND t.status = 'captured') THEN
+    why := 'no_captured_transaction';
+  END IF;
+  IF why IS NULL AND (coalesce(o.metadata #>> '{mercadopago,mode}', '') = 'test'
+      OR NOT EXISTS (SELECT 1 FROM public.payment_transactions t
+        WHERE t.payment_order_id = o.id AND t.external_transaction_id = o.external_payment_id
+          AND t.status = 'captured' AND t.metadata ->> 'live_mode' = 'true')) THEN
+    why := 'test_mode_payment';
+  END IF;
+  IF why IS NULL AND (o.subtotal <= 0 OR o.provider_payout < 0 OR o.provider_payout > o.subtotal) THEN
+    why := 'invalid_amounts';
+  END IF;
+  IF why IS NULL AND EXISTS (SELECT 1 FROM public.service_earnings se WHERE se.service_contract_id = c.id) THEN
+    why := 'already_has_earning';
+  END IF;
+
+  RETURN QUERY SELECT c.id, why IS NULL, coalesce(why, 'qualifies'), o.id, c.provider_profile_id,
+    c.buyer_profile_id, o.subtotal, o.platform_fee + o.provider_fee, o.provider_payout,
+    upper(o.currency_code), o.paid_at;
+END $$;
+REVOKE ALL ON FUNCTION public.service_earning_eligibility(uuid) FROM PUBLIC, anon, authenticated;
+
+DROP FUNCTION IF EXISTS public.service_earning_ensure(uuid);
+-- Alta de la ganancia (triggers y backfill). La restricción UNIQUE es la última barrera.
+CREATE OR REPLACE FUNCTION public.service_earning_ensure(_contract_id uuid)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE el record; new_id uuid; r record;
+BEGIN
+  SELECT * INTO el FROM public.service_earning_eligibility(_contract_id);
+  IF el.qualifies IS NOT TRUE THEN RETURN false; END IF;
   INSERT INTO public.service_earnings(service_contract_id, payment_order_id, provider_profile_id,
     buyer_profile_id, gross_amount, platform_fee, net_amount, currency_code, available_at)
-  VALUES (c.id, o.id, c.provider_profile_id, c.buyer_profile_id, o.subtotal,
-    o.platform_fee + o.provider_fee, o.provider_payout, o.currency_code,
-    now() + make_interval(hours => (public.service_finance_cfg(o.currency_code)).hold_hours))
-  ON CONFLICT DO NOTHING            -- UNIQUE(service_contract_id) y UNIQUE(payment_order_id): imposible duplicar
+  VALUES (el.contract_id, el.payment_order_id, el.provider_profile_id, el.buyer_profile_id,
+    el.gross_amount, el.platform_fee, el.net_amount, el.currency_code,
+    now() + make_interval(hours => (public.service_finance_cfg(el.currency_code)).hold_hours))
+  ON CONFLICT DO NOTHING            -- UNIQUE(service_contract_id) y UNIQUE(payment_order_id)
   RETURNING id INTO new_id;
-  IF new_id IS NOT NULL THEN
-    PERFORM public.payment_audit('service_earning_created', NULL, 'service_earning', new_id,
-      jsonb_build_object('contract', c.id, 'payment_order', o.id));
-  END IF;
+  IF new_id IS NULL THEN RETURN false; END IF;
+  PERFORM public.payment_audit('service_earning_created', NULL, 'service_earning', new_id,
+    jsonb_build_object('contract', el.contract_id, 'payment_order', el.payment_order_id));
+  -- Reembolsos parciales ya confirmados antes de crear la ganancia.
+  FOR r IN SELECT id FROM public.payment_refunds
+           WHERE payment_order_id = el.payment_order_id AND status = 'succeeded' ORDER BY created_at LOOP
+    PERFORM public.service_earning_reverse_partial(r.id);
+  END LOOP;
+  RETURN true;
 END $$;
 REVOKE ALL ON FUNCTION public.service_earning_ensure(uuid) FROM PUBLIC, anon, authenticated;
 
--- Reversión (reembolso total/parcial del pago).
+-- 4b. Reembolsos ------------------------------------------------------------------
+-- Parcial: por cada reembolso confirmado ('succeeded') se crea UNA reversión proporcional
+-- según refund_fee_policy, con tope en lo que queda del neto. Si la ganancia ya estaba
+-- disponible, se asienta un movimiento negativo en el ledger; si estaba pendiente, la
+-- liberación acreditará solo el neto restante. Nada histórico se modifica ni borra.
+CREATE OR REPLACE FUNCTION public.service_earning_reverse_partial(_refund_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE r public.payment_refunds; o public.payment_orders; e public.service_earnings;
+        pol text; already numeric; nr numeric; rv uuid;
+BEGIN
+  SELECT * INTO r FROM public.payment_refunds WHERE id = _refund_id;
+  IF r.id IS NULL OR r.status <> 'succeeded' THEN RETURN; END IF;
+  SELECT * INTO o FROM public.payment_orders WHERE id = r.payment_order_id;
+  IF o.id IS NULL OR o.subject_type <> 'service_contract' THEN RETURN; END IF;
+  SELECT * INTO e FROM public.service_earnings WHERE payment_order_id = o.id FOR UPDATE;
+  IF e.id IS NULL OR e.status = 'reversed' THEN RETURN; END IF;
+  IF EXISTS (SELECT 1 FROM public.service_earning_reversals WHERE payment_refund_id = r.id) THEN RETURN; END IF;
+  pol := (public.service_finance_cfg(e.currency_code)).refund_fee_policy;
+  SELECT coalesce(sum(net_reversed), 0) INTO already FROM public.service_earning_reversals WHERE earning_id = e.id;
+  nr := CASE pol WHEN 'provider_bears_full' THEN r.amount
+                 ELSE round(e.net_amount * r.amount / nullif(o.total_charged, 0), 2) END;
+  nr := least(coalesce(nr, 0), e.net_amount - already);
+  IF nr <= 0 THEN RETURN; END IF;
+  INSERT INTO public.service_earning_reversals(earning_id, payment_refund_id, kind, refund_amount, net_reversed, fee_policy)
+  VALUES (e.id, r.id, 'partial', r.amount, nr, pol)
+  ON CONFLICT DO NOTHING RETURNING id INTO rv;
+  IF rv IS NULL THEN RETURN; END IF;
+  IF e.status = 'available' THEN
+    INSERT INTO public.service_ledger(profile_id, currency_code, entry_type, amount, earning_id, reversal_id)
+    VALUES (e.provider_profile_id, e.currency_code, 'earning_partially_reversed', -nr, e.id, rv);
+  END IF;
+  IF already + nr >= e.net_amount THEN
+    UPDATE public.service_earnings SET status = 'reversed', reversed_at = now(),
+      reversal_reason = 'fully_refunded' WHERE id = e.id;
+  END IF;
+  PERFORM public.service_finance_notify(e.provider_profile_id, 'service_earning_partially_reversed',
+    'Reembolso parcial aplicado', '-' || nr || ' ' || e.currency_code);
+  PERFORM public.payment_audit('service_earning_partially_reversed', NULL, 'service_earning', e.id,
+    jsonb_build_object('refund', r.id, 'net_reversed', nr, 'policy', pol));
+END $$;
+REVOKE ALL ON FUNCTION public.service_earning_reverse_partial(uuid) FROM PUBLIC, anon, authenticated;
+
+-- Total: revierte lo que quede del neto (tras parciales) con una sola fila 'full'.
 CREATE OR REPLACE FUNCTION public.service_earning_reverse(_order_id uuid, _reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE e public.service_earnings;
+DECLARE e public.service_earnings; already numeric; remaining numeric; rv uuid;
 BEGIN
   SELECT * INTO e FROM public.service_earnings WHERE payment_order_id = _order_id FOR UPDATE;
   IF e.id IS NULL OR e.status = 'reversed' THEN RETURN; END IF;
-  IF e.status = 'available' THEN
-    INSERT INTO public.service_ledger(profile_id, currency_code, entry_type, amount, earning_id)
-    VALUES (e.provider_profile_id, e.currency_code, 'earning_reversed', -e.net_amount, e.id)
-    ON CONFLICT DO NOTHING;
+  SELECT coalesce(sum(net_reversed), 0) INTO already FROM public.service_earning_reversals WHERE earning_id = e.id;
+  remaining := e.net_amount - already;
+  IF remaining > 0 THEN
+    INSERT INTO public.service_earning_reversals(earning_id, kind, net_reversed, fee_policy)
+    VALUES (e.id, 'full', remaining, (public.service_finance_cfg(e.currency_code)).refund_fee_policy)
+    ON CONFLICT DO NOTHING RETURNING id INTO rv;
+    IF rv IS NOT NULL AND e.status = 'available' THEN
+      INSERT INTO public.service_ledger(profile_id, currency_code, entry_type, amount, earning_id, reversal_id)
+      VALUES (e.provider_profile_id, e.currency_code, 'earning_reversed', -remaining, e.id, rv)
+      ON CONFLICT DO NOTHING;
+    END IF;
   END IF;
   UPDATE public.service_earnings SET status = 'reversed', reversed_at = now(),
     reversal_reason = left(_reason, 200) WHERE id = e.id;
   PERFORM public.payment_audit('service_earning_reversed', NULL, 'service_earning', e.id,
-    jsonb_build_object('reason', _reason));
+    jsonb_build_object('reason', _reason, 'net_reversed', remaining));
 END $$;
 REVOKE ALL ON FUNCTION public.service_earning_reverse(uuid, text) FROM PUBLIC, anon, authenticated;
 
@@ -298,14 +460,16 @@ DROP TRIGGER IF EXISTS service_earnings_contract_trg ON public.service_contracts
 CREATE TRIGGER service_earnings_contract_trg AFTER UPDATE OF status ON public.service_contracts
 FOR EACH ROW EXECUTE FUNCTION public.service_earnings_on_contract();
 
+-- Orden: 'paid' crea la ganancia (si el contrato ya terminó); 'refunded' la revierte entera.
+-- 'partially_refunded' NO revierte todo: lo hace el trigger de payment_refunds por reembolso.
 CREATE OR REPLACE FUNCTION public.service_earnings_on_order()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   IF NEW.subject_type <> 'service_contract' THEN RETURN NEW; END IF;
   IF NEW.status = 'paid' AND OLD.status IS DISTINCT FROM 'paid' THEN
     PERFORM public.service_earning_ensure(NEW.service_contract_id);
-  ELSIF NEW.status IN ('refunded', 'partially_refunded') AND OLD.status IS DISTINCT FROM NEW.status THEN
-    PERFORM public.service_earning_reverse(NEW.id, 'payment_' || NEW.status);
+  ELSIF NEW.status = 'refunded' AND OLD.status IS DISTINCT FROM 'refunded' THEN
+    PERFORM public.service_earning_reverse(NEW.id, 'payment_refunded');
   END IF;
   RETURN NEW;
 END $$;
@@ -313,28 +477,46 @@ DROP TRIGGER IF EXISTS service_earnings_order_trg ON public.payment_orders;
 CREATE TRIGGER service_earnings_order_trg AFTER UPDATE OF status ON public.payment_orders
 FOR EACH ROW EXECUTE FUNCTION public.service_earnings_on_order();
 
+CREATE OR REPLACE FUNCTION public.service_earnings_on_refund()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NEW.status = 'succeeded' AND (TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM 'succeeded') THEN
+    PERFORM public.service_earning_reverse_partial(NEW.id);
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS service_earnings_refund_trg ON public.payment_refunds;
+CREATE TRIGGER service_earnings_refund_trg AFTER INSERT OR UPDATE OF status ON public.payment_refunds
+FOR EACH ROW EXECUTE FUNCTION public.service_earnings_on_refund();
+
 -- 5. Liberación de ganancias vencidas (idempotente). Solo si el contrato sigue completado
 --    y el pago sigue pagado: disputas/reembolsos bloquean la liberación.
 CREATE OR REPLACE FUNCTION public.service_release_due_earnings(_profile uuid DEFAULT NULL)
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE e public.service_earnings; n integer := 0;
+DECLARE e public.service_earnings; n integer := 0; credit numeric;
 BEGIN
   FOR e IN
     SELECT se.* FROM public.service_earnings se
     JOIN public.service_contracts c ON c.id = se.service_contract_id AND c.status = 'completed'
-    JOIN public.payment_orders o ON o.id = se.payment_order_id AND o.status = 'paid'
+    JOIN public.payment_orders o ON o.id = se.payment_order_id AND o.status IN ('paid', 'partially_refunded')
     WHERE se.status = 'pending' AND se.available_at <= now()
+      -- Un reembolso en curso congela la liberación hasta que se resuelva.
+      AND NOT EXISTS (SELECT 1 FROM public.payment_refunds pr
+                      WHERE pr.payment_order_id = o.id AND pr.status IN ('pending', 'processing'))
       AND (_profile IS NULL OR se.provider_profile_id = _profile)
     FOR UPDATE OF se SKIP LOCKED
   LOOP
+    -- Neto menos reversiones parciales registradas mientras estaba pendiente.
+    credit := e.net_amount - coalesce((SELECT sum(net_reversed) FROM public.service_earning_reversals
+                                       WHERE earning_id = e.id), 0);
     UPDATE public.service_earnings SET status = 'available', released_at = now() WHERE id = e.id;
-    IF e.net_amount > 0 THEN
+    IF credit > 0 THEN
       INSERT INTO public.service_ledger(profile_id, currency_code, entry_type, amount, earning_id)
-      VALUES (e.provider_profile_id, e.currency_code, 'earning_released', e.net_amount, e.id)
+      VALUES (e.provider_profile_id, e.currency_code, 'earning_released', credit, e.id)
       ON CONFLICT DO NOTHING;
     END IF;
     PERFORM public.service_finance_notify(e.provider_profile_id, 'service_earning_available',
-      'Nueva ganancia disponible', e.net_amount || ' ' || e.currency_code);
+      'Nueva ganancia disponible', credit || ' ' || e.currency_code);
     PERFORM public.payment_audit('service_earning_released', NULL, 'service_earning', e.id, '{}'::jsonb);
     n := n + 1;
   END LOOP;
@@ -365,10 +547,10 @@ BEGIN
   )
   SELECT cur.currency_code,
     greatest(led.bal, 0),
-    coalesce((SELECT sum(se.net_amount) FROM public.service_earnings se
+    coalesce((SELECT sum((se.net_amount - coalesce((SELECT sum(rv.net_reversed) FROM public.service_earning_reversals rv WHERE rv.earning_id = se.id), 0))) FROM public.service_earnings se
               WHERE se.provider_profile_id = me AND se.currency_code = cur.currency_code
                 AND se.status = 'pending'), 0)::numeric,
-    coalesce((SELECT sum(se.net_amount) FROM public.service_earnings se
+    coalesce((SELECT sum((se.net_amount - coalesce((SELECT sum(rv.net_reversed) FROM public.service_earning_reversals rv WHERE rv.earning_id = se.id), 0))) FROM public.service_earnings se
               WHERE se.provider_profile_id = me AND se.currency_code = cur.currency_code
                 AND se.status <> 'reversed'), 0)::numeric,
     coalesce((SELECT sum(w.amount) FROM public.service_withdrawals w
@@ -446,6 +628,9 @@ BEGIN
   PERFORM public.service_release_due_earnings(me);
   SELECT coalesce(sum(amount), 0) INTO avail FROM public.service_ledger
    WHERE profile_id = me AND currency_code = upper(_currency);
+  -- Saldo negativo (deuda por reembolso posterior a un retiro): no se permiten retiros nuevos.
+  -- La cuenta NO se suspende; la deuda se compensa sola con las próximas ganancias.
+  IF avail < 0 THEN RAISE EXCEPTION 'negative_balance_blocks_withdrawal' USING ERRCODE = '22023'; END IF;
   IF amt > avail THEN RAISE EXCEPTION 'amount_exceeds_available' USING ERRCODE = '22023'; END IF;
 
   IF amt < (public.service_finance_cfg(_currency)).min_withdrawal THEN
@@ -572,9 +757,73 @@ GRANT EXECUTE ON FUNCTION public.record_service_payout_completed(uuid, text, tex
 -- Funciones de trigger: nadie las llama directamente.
 REVOKE ALL ON FUNCTION public.service_earnings_on_contract() FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.service_earnings_on_order() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.service_earnings_on_refund() FROM PUBLIC, anon, authenticated;
 
--- 11. Contrataciones ya completadas y pagadas antes de esta migración ----------------
-SELECT public.service_earning_ensure(c.id)
-FROM public.service_contracts c
-WHERE c.status = 'completed'
-  AND NOT EXISTS (SELECT 1 FROM public.service_earnings se WHERE se.service_contract_id = c.id);
+-- 11. Historial: esta migración NO genera ganancias históricas automáticamente --------
+-- Re-ejecutar el archivo nunca crea dinero. El historial se procesa en 3 pasos manuales,
+-- solo desde el SQL Editor (ningún rol de la app puede llamar estas funciones):
+--   1) SELECT * FROM public.service_earnings_backfill_summary();          -- totales (solo lectura)
+--   2) SELECT * FROM public.service_earnings_backfill_report() ORDER BY qualifies DESC, reason; -- detalle
+--   3) SELECT public.service_run_earnings_backfill(<número exacto de 'qualifies' del paso 1>);
+
+-- Detalle por contratación (solo lectura): califica o motivo exacto de exclusión.
+CREATE OR REPLACE FUNCTION public.service_earnings_backfill_report()
+RETURNS TABLE (contract_id uuid, contract_status text, qualifies boolean, reason text,
+  payment_order_id uuid, provider_profile_id uuid, gross_amount numeric, platform_fee numeric,
+  net_amount numeric, currency_code text, paid_at timestamptz, would_be_status text,
+  would_be_available_at timestamptz)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT el.contract_id, c.status, el.qualifies, el.reason, el.payment_order_id, el.provider_profile_id,
+    el.gross_amount, el.platform_fee, el.net_amount, el.currency_code, el.paid_at,
+    CASE WHEN el.qualifies THEN 'pending' END,
+    CASE WHEN el.qualifies THEN now() + make_interval(hours => (public.service_finance_cfg(el.currency_code)).hold_hours) END
+  FROM public.service_contracts c
+  CROSS JOIN LATERAL public.service_earning_eligibility(c.id) el
+$$;
+REVOKE ALL ON FUNCTION public.service_earnings_backfill_report() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.service_earnings_backfill_report() TO service_role;
+
+-- Resumen (solo lectura). Toda ganancia nace 'pending' (retención); disponible al crear = 0.
+CREATE OR REPLACE FUNCTION public.service_earnings_backfill_summary()
+RETURNS TABLE (currency_code text, qualifying_contracts bigint, non_qualifying_contracts bigint,
+  gross_total numeric, fee_total numeric, net_total numeric, would_be_pending numeric,
+  would_be_available numeric, exclusion_reasons jsonb)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  WITH r AS (SELECT * FROM public.service_earnings_backfill_report())
+  SELECT coalesce(r.currency_code, '—'),
+    count(*) FILTER (WHERE r.qualifies),
+    count(*) FILTER (WHERE NOT r.qualifies),
+    coalesce(sum(r.gross_amount) FILTER (WHERE r.qualifies), 0),
+    coalesce(sum(r.platform_fee) FILTER (WHERE r.qualifies), 0),
+    coalesce(sum(r.net_amount) FILTER (WHERE r.qualifies), 0),
+    coalesce(sum(r.net_amount) FILTER (WHERE r.qualifies), 0),
+    0::numeric,
+    (SELECT coalesce(jsonb_object_agg(x.reason, x.n), '{}'::jsonb) FROM (
+       SELECT r2.reason, count(*) AS n FROM r r2
+       WHERE NOT r2.qualifies AND r2.currency_code IS NOT DISTINCT FROM r.currency_code
+       GROUP BY r2.reason) x)
+  FROM r GROUP BY r.currency_code
+$$;
+REVOKE ALL ON FUNCTION public.service_earnings_backfill_summary() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.service_earnings_backfill_summary() TO service_role;
+
+-- Ejecución explícita. Exige el número exacto visto en el resumen (si cambió, aborta todo).
+-- Idempotente: lo ya creado deja de calificar ('already_has_earning') y UNIQUE impide duplicados.
+CREATE OR REPLACE FUNCTION public.service_run_earnings_backfill(_expected_count integer)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE n integer; created integer := 0; c record;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('service_earnings_backfill'));
+  SELECT count(*) INTO n FROM public.service_earnings_backfill_report() WHERE qualifies;
+  IF n IS DISTINCT FROM _expected_count THEN
+    RAISE EXCEPTION 'backfill_count_mismatch: expected %, found %', _expected_count, n USING ERRCODE = '22023';
+  END IF;
+  FOR c IN SELECT contract_id FROM public.service_earnings_backfill_report() WHERE qualifies LOOP
+    IF public.service_earning_ensure(c.contract_id) THEN created := created + 1; END IF;
+  END LOOP;
+  PERFORM public.payment_audit('service_earnings_backfill', NULL, 'service_earnings', NULL,
+    jsonb_build_object('expected', _expected_count, 'created', created));
+  RETURN created;
+END $$;
+REVOKE ALL ON FUNCTION public.service_run_earnings_backfill(integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.service_run_earnings_backfill(integer) TO service_role;
