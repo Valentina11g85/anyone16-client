@@ -36,7 +36,7 @@ import ideaTechnician from "@/assets/home/idea-technician.jpg";
 import ideaReceive from "@/assets/home/idea-receive-2.jpg";
 import ideaDocuments from "@/assets/home/idea-documents.jpg";
 import ideaReturn from "@/assets/home/idea-return.jpg";
-import ideaKeys from "@/assets/home/idea-keys.jpg";
+import ideaDriver from "@/assets/home/idea-driver.jpg";
 import ideaWelcome from "@/assets/home/idea-welcome.jpg";
 import ideaPlants from "@/assets/home/idea-plants.jpg";
 import ideaPet from "@/assets/home/idea-pet.jpg";
@@ -173,7 +173,7 @@ export function HomeScreen({
     { title: "Recibir un paquete", line: "Que alguien lo reciba por ti.", prompt: "Necesito que alguien reciba un paquete por mí.", art: ideaReceive },
     { title: "Recoger documentos", line: "Tus papeles, donde deben estar.", prompt: "Necesito que alguien recoja unos documentos por mí.", art: ideaDocuments },
     { title: "Devolver una compra", line: "Alguien puede devolverla por ti.", prompt: "Necesito que alguien devuelva una compra por mí.", art: ideaReturn },
-    { title: "Recoger unas llaves", line: "Alguien puede recogerlas por ti.", prompt: "Necesito que alguien recoja unas llaves por mí.", art: ideaKeys },
+    { title: "Conductor por horas", line: "Un conductor cuando lo necesites.", prompt: "Necesito un conductor por horas.", art: ideaDriver },
     { title: "Recibir a alguien", line: "Que alguien esté ahí cuando llegue.", prompt: "Necesito que alguien reciba a una persona en mi casa cuando llegue.", art: ideaWelcome },
     { title: "Cuidar mis plantas", line: "Una mano mientras no estás.", prompt: "Necesito que alguien cuide y riegue mis plantas mientras no estoy.", art: ideaPlants },
     { title: "Ayudar con mi mascota", line: "Una mano para tu compañero.", prompt: "Necesito que alguien me ayude con mi mascota.", art: ideaPet },
