@@ -249,7 +249,12 @@ export function OpportunitiesScreen({
               : "Personas que buscan a alguien para realizar un servicio."}
           </p>
           {view === "jobs" && seekLocked ? (
-            <div className="mt-6"><LockedOpportunitiesExperience /></div>
+            <div className="mt-6">
+              <button type="button" className="opx-column-cta" disabled={!signedIn} onClick={() => startNew("SEEK")}>
+                <Plus className="size-4" /> Publicar lo que necesito
+              </button>
+              <div className="mt-5"><LockedOpportunitiesExperience /></div>
+            </div>
           ) : (
           <HireSide
             key={`${view}-${preset.nonce}`}
@@ -289,7 +294,7 @@ export function OpportunitiesScreen({
         ))}
 
       {open?.premiumLocked && (
-        <UnlockSheet listing={open} onClose={() => setOpenId(null)} />
+        <UnlockSheet onClose={() => setOpenId(null)} />
       )}
       {open && !open.premiumLocked && (
         <ListingDetail

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Lock, X } from "lucide-react";
 
-import { categoryByCode, type ServiceListing } from "@/lib/opportunities-model";
 import { OPPORTUNITIES_UNLOCK_LABEL, startOpportunitiesUnlock } from "@/lib/opportunities-access";
 
 const PENDING_NOTICE = "El pago estará disponible muy pronto. Aún no se ha realizado ningún cobro.";
@@ -55,7 +54,7 @@ export function LockedOpportunitiesExperience() {
 }
 
 /** Unlock panel. Never grants access: the entitlement is only activated by Foundation. */
-export function UnlockSheet({ onClose, listing }: { onClose: () => void; listing?: ServiceListing }) {
+export function UnlockSheet({ onClose }: { onClose: () => void }) {
   const { busy, notice, run } = useUnlock();
   return (
     <div className="pw-overlay" role="dialog" aria-modal="true" aria-label="Desbloquear oportunidades" onClick={onClose}>
@@ -66,7 +65,6 @@ export function UnlockSheet({ onClose, listing }: { onClose: () => void; listing
           <X className="size-5" />
         </button>
         <div className="relative text-center">
-          {listing && <p className="fv-cat">{categoryByCode(listing.categoryCode).name}</p>}
           <span className="pw-lock mx-auto mt-3"><Lock className="size-6" aria-hidden /></span>
           <p className="mt-4 font-display text-xl font-extrabold text-foreground">Accede a todas las oportunidades</p>
           <p className="mt-1 text-sm text-muted-foreground">Desbloquea el contenido completo de Ofertas de Trabajo.</p>
