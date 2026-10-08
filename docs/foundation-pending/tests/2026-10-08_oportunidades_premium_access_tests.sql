@@ -20,9 +20,34 @@ WHERE NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.user_id = t.uid);
 UPDATE t SET pid = p.id FROM public.profiles p WHERE p.user_id = t.uid;
 
 -- Dos publicaciones del AUTHOR (un servicio y una oferta de trabajo). is_demo=false: reales.
+-- category_slug es NOT NULL en Foundation. Si tiene FK, se usa un slug que YA existe en la
+-- tabla referenciada (preferente 'other', el valor por defecto de la app); si no tiene FK,
+-- se usa 'other'. No se inventan categorías ni se insertan filas en catálogos.
+CREATE TEMP TABLE test_cat(slug text) ON COMMIT DROP;
+DO $cat$
+DECLARE ref_tbl regclass; ref_col text; v text;
+BEGIN
+  SELECT c.confrelid::regclass, a2.attname INTO ref_tbl, ref_col
+    FROM pg_constraint c
+    JOIN pg_attribute a1 ON a1.attrelid = c.conrelid AND a1.attnum = c.conkey[1]
+    JOIN pg_attribute a2 ON a2.attrelid = c.confrelid AND a2.attnum = c.confkey[1]
+   WHERE c.conrelid = 'public.service_listings'::regclass AND c.contype = 'f'
+     AND a1.attname = 'category_slug'
+   LIMIT 1;
+  IF ref_tbl IS NULL THEN
+    v := 'other';
+  ELSE
+    EXECUTE format('SELECT %1$I::text FROM %2$s ORDER BY (%1$I::text = ''other'') DESC, %1$I LIMIT 1',
+                   ref_col, ref_tbl) INTO v;
+    IF v IS NULL THEN RAISE EXCEPTION 'PRECONDICIÓN TEST: % no tiene categorías', ref_tbl; END IF;
+  END IF;
+  INSERT INTO test_cat VALUES (v);
+END $cat$;
+
 WITH a AS (SELECT pid FROM t WHERE label = 'AUTHOR')
-INSERT INTO public.service_listings(profile_id, listing_type, title, description, status, is_demo)
-SELECT a.pid, x.kind, 'TEST ' || x.kind, 'Detalle privado', 'published', false
+INSERT INTO public.service_listings(profile_id, listing_type, title, description, status, is_demo, category_slug)
+SELECT a.pid, x.kind, 'TEST ' || x.kind, 'Detalle privado', 'published', false,
+       (SELECT slug FROM test_cat)
 FROM a, (VALUES ('offer'), ('request')) x(kind);
 UPDATE t SET lid = (SELECT id FROM public.service_listings
                     WHERE profile_id = (SELECT pid FROM t WHERE label = 'AUTHOR') AND listing_type = 'request');
@@ -558,10 +583,16 @@ BEGIN
   -- R7e. NOBODY: mercado y resumen 0.
   IF pg_temp.market_count('NOBODY') <> 0 THEN RAISE EXCEPTION 'TEST R7e FALLÓ'; END IF;
   PERFORM pg_temp.as_user('NOBODY'); SET LOCAL ROLE authenticated;
-  SELECT count(*) INTO n FROM public.get_opportunities_market_summary() s
-   WHERE to_jsonb(s)::text ~ '"[a-z_]+": *[1-9]';
+  IF EXISTS (
+    SELECT 1
+    FROM public.get_opportunities_market_summary() s
+    WHERE s.services_count <> 0
+       OR s.job_offers_count <> 0
+  ) THEN
+    RESET ROLE;
+    RAISE EXCEPTION 'TEST R7e2 FALLÓ (resumen sin Premium)';
+  END IF;
   RESET ROLE;
-  IF n <> 0 THEN RAISE EXCEPTION 'TEST R7e2 FALLÓ (resumen sin Premium)'; END IF;
   -- R7f. anon: nada.
   SET LOCAL ROLE anon;
   BEGIN
