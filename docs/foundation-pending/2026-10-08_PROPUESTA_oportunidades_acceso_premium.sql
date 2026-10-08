@@ -1,3 +1,4 @@
+-- REEMPLAZADO por 2026-10-08_oportunidades_premium_access.sql. NO EJECUTAR este borrador.
 -- PROPUESTA — NO EJECUTAR TODAVÍA. Requiere revisión y aprobación del usuario.
 -- Acceso premium a "Ofertas de trabajo" (service_listings con intención SEEK).
 --
