@@ -15,6 +15,10 @@ import type {
 import {
   DEMO_LISTINGS,
   ensureContract,
+  getMarketplaceListingById,
+  getMarketplaceListings,
+  getMyListings,
+  getMyOpportunitiesAccess,
   loadContracts,
   loadServiceReputation,
   loadServiceReviews,
@@ -24,8 +28,19 @@ import {
   updateContractStatus,
 } from "./opportunities-repo";
 
+export type OpportunitiesAccessState = "loading" | "locked" | "unlocked";
+
 export type OpportunitiesState = {
+  /**
+   * Everything this account may see, from three separate safe sources:
+   * market (premium RPC) ∪ my own listings ∪ concrete related listings (single-listing RPC).
+   * Use `market` — never `listings` — to render the general marketplace.
+   */
   listings: ServiceListing[];
+  /** General marketplace rows only (get_opportunities_market). Empty without premium. */
+  market: ServiceListing[];
+  /** Server-decided premium access of the current account (UX only, never grants anything). */
+  access: OpportunitiesAccessState;
   offers: ServiceOffer[];
   contracts: ServiceContract[];
   reviews: ServiceReview[];
@@ -37,6 +52,8 @@ export type OpportunitiesState = {
 
 const initialState: OpportunitiesState = {
   listings: [],
+  market: [],
+  access: "loading",
   offers: [],
   contracts: [],
   reviews: [],
@@ -59,25 +76,62 @@ const subscribe = (l: () => void) => {
 
 const isDemoId = (id: string) => id.startsWith("demo-");
 
+const mergeListings = (...groups: ServiceListing[][]) => {
+  const byId = new Map<string, ServiceListing>();
+  groups.flat().forEach((l) => byId.set(l.id, l));
+  return [...byId.values()];
+};
+
+let lastUserId: string | null = null;
+
 async function reload() {
   set((s) => ({ ...s, loading: true }));
   try {
     const { data } = await foundation.auth.getSession();
-    if (!data.session) {
-      set((s) => ({ ...s, listings: [], offers: [], contracts: [], reviews: [], reputation: {}, loading: false, error: null }));
+    const userId = data.session?.user.id ?? null;
+    if (userId !== lastUserId) {
+      // Account changed: drop everything from the previous account before loading.
+      lastUserId = userId;
+      set(() => ({ ...initialState, loading: Boolean(userId), access: userId ? "loading" : "locked" }));
+    }
+    if (!userId) {
+      set((s) => ({ ...s, ...initialState, access: "locked", loading: false }));
       return;
     }
-    const listings = await opportunitiesAdapter.loadListings();
-    const offers = await opportunitiesAdapter.loadOffers(listings);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: me } = await (foundation as any)
+      .from("profiles")
+      .select("id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const profileId: string | null = me?.id ?? null;
+
+    const premium = await getMyOpportunitiesAccess();
+    // Without premium the marketplace is not even requested.
+    const market = premium ? await getMarketplaceListings() : [];
+    const own = profileId ? await getMyListings(profileId) : [];
     const contracts = await loadContracts();
+    const known = mergeListings(market, own);
+    const offers = await opportunitiesAdapter.loadOffers(known);
+    // Concrete listings I take part in (offers/contracts), one by one via the single-listing RPC.
+    const relatedIds = [
+      ...new Set([...offers.map((o) => o.listingId), ...contracts.map((c) => c.listingId)]),
+    ].filter((id) => id && !isDemoId(id) && !known.some((l) => l.id === id));
+    const related = (await Promise.all(relatedIds.map((id) => getMarketplaceListingById(id)))).filter(
+      (l): l is ServiceListing => l !== null,
+    );
+    const listings = mergeListings(market, own, related);
     const reviews = await loadServiceReviews();
     const ids = new Set<string>();
     listings.forEach((l) => l.authorProfileId && ids.add(l.authorProfileId));
     contracts.forEach((c) => (ids.add(c.buyerProfileId), ids.add(c.providerProfileId)));
     const reputation = await loadServiceReputation([...ids]);
+    if (lastUserId !== userId) return; // session changed while loading
     set((s) => ({
       ...s,
       listings,
+      market,
+      access: premium ? "unlocked" : "locked",
       contracts,
       reviews,
       reputation,
@@ -93,6 +147,18 @@ async function reload() {
       error: `No se pudieron cargar las oportunidades: ${(e as Error).message}`,
     }));
   }
+}
+
+/**
+ * Opens ONE concrete listing by id (deep links, contracts, chat). Uses only the
+ * single-listing RPC; null means Foundation does not authorize it for this account.
+ */
+export async function loadListingById(id: string): Promise<ServiceListing | null> {
+  const local = findListing(state, id);
+  if (local) return local;
+  const listing = await getMarketplaceListingById(id);
+  if (listing) set((s) => ({ ...s, listings: mergeListings(s.listings, [listing]) }));
+  return listing;
 }
 
 let started = false;
@@ -141,11 +207,14 @@ export function useOpportunities() {
 
 export const refreshOpportunities = reload;
 
-/** Real published listings first, then clearly-flagged examples. */
-export const feedListings = (s: OpportunitiesState) => [
-  ...s.listings.filter((l) => l.status === "ACTIVE"),
-  ...DEMO_LISTINGS,
-];
+/**
+ * General marketplace feed: ONLY rows from the premium market RPC, then examples.
+ * Never built from own/related listings, so participation can't unlock it.
+ */
+export const feedListings = (s: OpportunitiesState) =>
+  s.access === "unlocked"
+    ? [...s.market.filter((l) => l.status === "ACTIVE"), ...DEMO_LISTINGS]
+    : [];
 
 export const findListing = (s: OpportunitiesState, id: string) =>
   s.listings.find((l) => l.id === id) ?? DEMO_LISTINGS.find((l) => l.id === id) ?? null;

@@ -203,15 +203,83 @@ function mapOffers(rows: OfferRow[], listings: ServiceListing[]): ServiceOffer[]
     });
 }
 
+/** Adds author name/photo to rows returned by RPCs (they carry no profile join). */
+async function withAuthors(rows: ListingRow[]): Promise<ListingRow[]> {
+  const ids = [...new Set(rows.map((r) => r.profile_id).filter(Boolean))] as string[];
+  if (ids.length === 0) return rows;
+  const { data } = await db().from("profiles").select("id, full_name, avatar_url").in("id", ids);
+  const byId = new Map(((data ?? []) as Array<{ id: string; full_name: string | null; avatar_url: string | null }>).map((p) => [p.id, p]));
+  return rows.map((r) => ({ ...r, author: r.profile_id ? (byId.get(r.profile_id) ?? null) : null }));
+}
+
+/**
+ * Premium access of the CURRENT account, decided by Foundation
+ * (RPC get_my_opportunities_access). Any error or missing RPC → locked.
+ */
+export async function getMyOpportunitiesAccess(): Promise<boolean> {
+  try {
+    const { data, error } = await db().rpc("get_my_opportunities_access");
+    if (error) return false;
+    const row = Array.isArray(data) ? data[0] : data;
+    return row === true || (typeof row === "object" && row !== null && (row as { active?: boolean }).active === true);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * MARKETPLACE (general listing). Only source for "Servicios que se ofrecen" and
+ * "Ofertas de trabajo": RPC get_opportunities_market. Foundation returns 0 rows
+ * without premium access and never includes the caller's own listings.
+ * No fallback: if the RPC fails or is not installed yet, the market is empty.
+ */
+export async function getMarketplaceListings(
+  listingType: "offer" | "request" | null = null,
+  limit = 100,
+  offset = 0,
+): Promise<ServiceListing[]> {
+  const { data, error } = await db().rpc("get_opportunities_market", {
+    _listing_type: listingType,
+    _limit: limit,
+    _offset: offset,
+  });
+  if (error) return [];
+  const rows = ((data ?? []) as ListingRow[]).filter((r) => !r.is_demo);
+  return (await withAuthors(rows)).map(fromRow);
+}
+
+/**
+ * ONE concrete listing the app already knows it needs (contract, chat, offer,
+ * notification, history). RPC get_service_listing_for_me: Foundation returns it
+ * only with premium access or a real relationship with THAT listing. null = not
+ * available for this account. Never used to list, search or as market fallback.
+ */
+export async function getMarketplaceListingById(id: string): Promise<ServiceListing | null> {
+  if (!id) return null;
+  const { data, error } = await db().rpc("get_service_listing_for_me", { _listing_id: id });
+  if (error) return null;
+  const row = (Array.isArray(data) ? data[0] : data) as ListingRow | undefined;
+  if (!row || row.is_demo) return null;
+  const [withAuthor] = await withAuthors([row]);
+  return fromRow(withAuthor ?? row);
+}
+
+/** The caller's OWN listings ("Mis servicios" / "Mis solicitudes"); RLS lets authors read their rows. */
+export async function getMyListings(profileId: string): Promise<ServiceListing[]> {
+  const { data, error } = await db()
+    .from("service_listings")
+    .select(LISTING_SELECT)
+    .eq("profile_id", profileId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as ListingRow[]).filter((r) => !r.is_demo).map(fromRow);
+}
+
 export const foundationAdapter: OpportunitiesAdapter = {
   kind: "foundation",
+  /** Marketplace only (see getMarketplaceListings). */
   async loadListings() {
-    const { data, error } = await db()
-      .from("service_listings")
-      .select(LISTING_SELECT)
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return ((data ?? []) as ListingRow[]).filter((r) => !r.is_demo).map(fromRow);
+    return getMarketplaceListings();
   },
   async saveListing(listing) {
     const { data: existing } = await db()
