@@ -513,17 +513,66 @@ DO $$ BEGIN
   IF pg_temp.detail_count('HIRED','request') <> 1 THEN RAISE EXCEPTION 'TEST R5-9c FALLÓ (participante)'; END IF;
 END $$;
 
--- R5-9d. Premium ve LAS DOS publicaciones de prueba (identificadas por el AUTHOR de la tabla t).
+-- R5-9d. Premium ve en el marketplace dos publicaciones INDEPENDIENTES del AUTHOR.
+-- Las dos publicaciones originales pueden haber quedado relacionadas con EARLY en pruebas
+-- anteriores (p. ej. R5-7d: EARLY propone en el servicio), y get_opportunities_market()
+-- excluye legítimamente las publicaciones en las que el usuario participa. Por eso aquí se
+-- crean DOS publicaciones nuevas del AUTHOR (published, is_demo=false, sin ofertas,
+-- contratos ni mensajes), se comprueba que EARLY ve exactamente esas 2 y, al terminar el
+-- bloque, se retiran para no alterar las pruebas siguientes, que cuentan las publicaciones
+-- del AUTHOR. No se tocan relaciones existentes. Todo queda además bajo el ROLLBACK final.
 -- No exige que el marketplace completo tenga 2: Foundation puede tener publicaciones reales.
 SELECT pg_temp.as_system();
 DO $$
-DECLARE v_ids uuid[]; v_test_count bigint;
+DECLARE
+  v_author uuid := (SELECT pid FROM t WHERE label = 'AUTHOR');
+  v_early  uuid := (SELECT pid FROM t WHERE label = 'EARLY');
+  v_ids uuid[];
+  v_test_count bigint;
 BEGIN
-  SELECT array_agg(id) INTO v_ids FROM public.service_listings
-   WHERE profile_id = (SELECT pid FROM t WHERE label = 'AUTHOR');
-  IF coalesce(array_length(v_ids, 1), 0) <> 2 THEN
-    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: se esperaban 2 publicaciones de prueba, hay %)', coalesce(array_length(v_ids, 1), 0);
+  IF v_author IS NULL OR v_early IS NULL THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: faltan AUTHOR o EARLY en t)';
   END IF;
+
+  -- Mismas columnas y valores que el INSERT original de publicaciones de prueba.
+  WITH ins AS (
+    INSERT INTO public.service_listings(
+      profile_id, listing_type, title, description, category_slug,
+      price_amount, price_currency, price_type, availability, duration_minutes, modality,
+      country_code, city, zone, service_radius_km, language_codes, photos, portfolio,
+      status, is_demo, published_at)
+    SELECT v_author, x.kind, 'TEST R5-9d ' || x.kind, 'Detalle privado', (SELECT slug FROM test_cat),
+           50000, 'COP', 'service', '{"type":"all_week","note":"","duration":"60"}'::jsonb, 60, 'in_person',
+           'CO', 'Bogotá', 'Test', 5, '["es"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+           'published', false, now()
+    FROM (VALUES ('offer'), ('request')) x(kind)
+    RETURNING id
+  )
+  SELECT array_agg(id) INTO v_ids FROM ins;
+
+  -- Precondiciones sobre EXACTAMENTE esas dos publicaciones.
+  IF coalesce(array_length(v_ids, 1), 0) <> 2 THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: no se crearon 2 publicaciones, hay %)',
+      coalesce(array_length(v_ids, 1), 0);
+  END IF;
+  IF (SELECT count(*) FROM public.service_listings
+       WHERE id = ANY (v_ids) AND profile_id = v_author
+         AND status = 'published' AND is_demo = false) <> 2 THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: publicaciones no son del AUTHOR, published y no demo)';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.service_offers o
+              WHERE o.service_listing_id = ANY (v_ids)
+                AND v_early IN (o.buyer_profile_id, o.provider_profile_id, o.sender_profile_id))
+     OR EXISTS (SELECT 1 FROM public.service_contracts c
+              WHERE c.service_listing_id = ANY (v_ids)
+                AND v_early IN (c.buyer_profile_id, c.provider_profile_id))
+     OR EXISTS (SELECT 1 FROM public.service_messages m
+              WHERE m.service_listing_id = ANY (v_ids)
+                AND v_early IN (m.sender_profile_id, m.receiver_profile_id)) THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: EARLY tiene relación con las publicaciones nuevas)';
+  END IF;
+
+  -- Como EARLY (Premium).
   PERFORM pg_temp.as_user('EARLY'); SET LOCAL ROLE authenticated;
   IF NOT coalesce((SELECT active FROM public.get_my_opportunities_access()), false) THEN
     RESET ROLE; RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: EARLY no tiene Premium)';
@@ -531,8 +580,16 @@ BEGIN
   SELECT count(*) INTO v_test_count FROM public.get_opportunities_market(NULL, 100, 0) m
    WHERE (m->>'id')::uuid = ANY (v_ids);
   RESET ROLE;
+  PERFORM pg_temp.as_system();
+
   IF v_test_count <> 2 THEN
-    RAISE EXCEPTION 'TEST R5-9d FALLÓ (Premium no ve las 2 publicaciones de prueba). EARLY ve % de 2', v_test_count;
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (Premium no ve las 2 publicaciones independientes). EARLY ve % de 2', v_test_count;
+  END IF;
+
+  -- Retirar solo las dos publicaciones creadas en este bloque (no tienen relaciones).
+  DELETE FROM public.service_listings WHERE id = ANY (v_ids);
+  IF (SELECT count(*) FROM public.service_listings WHERE profile_id = v_author) <> 2 THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (limpieza: el AUTHOR no quedó con sus 2 publicaciones originales)';
   END IF;
 END $$;
 SELECT pg_temp.as_system();
