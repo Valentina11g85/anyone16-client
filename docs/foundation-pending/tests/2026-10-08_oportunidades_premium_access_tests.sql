@@ -73,7 +73,7 @@ INSERT INTO public.service_listings(
   status, is_demo, published_at)
 SELECT a.pid, x.kind, 'TEST ' || x.kind, 'Detalle privado', (SELECT slug FROM test_cat),
        50000, 'COP', 'service', '{"type":"all_week","note":"","duration":"60"}'::jsonb, 60, 'in_person',
-       'CO', 'Bogotá', 'Test', 5, ARRAY['es']::text[], ARRAY[]::text[], ARRAY[]::text[],
+       'CO', 'Bogotá', 'Test', 5, '["es"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
        'published', false, now()
 FROM a, (VALUES ('offer'), ('request')) x(kind);
 UPDATE t SET lid = (SELECT id FROM public.service_listings
