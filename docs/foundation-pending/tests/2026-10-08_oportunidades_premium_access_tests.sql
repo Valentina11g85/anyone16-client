@@ -511,8 +511,28 @@ DO $$ BEGIN
   IF pg_temp.visible_as('NOBODY') <> 0 THEN RAISE EXCEPTION 'TEST R5-9a FALLÓ'; END IF;
   IF pg_temp.detail_count('NOBODY','offer') <> 0 THEN RAISE EXCEPTION 'TEST R5-9b FALLÓ (UUID sin relación)'; END IF;
   IF pg_temp.detail_count('HIRED','request') <> 1 THEN RAISE EXCEPTION 'TEST R5-9c FALLÓ (participante)'; END IF;
-  IF pg_temp.market_count('EARLY') <> 2 THEN RAISE EXCEPTION 'TEST R5-9d FALLÓ (Premium no ve ajenas)'; END IF;
 END $$;
+
+-- R5-9d. Premium ve LAS DOS publicaciones de prueba (identificadas por el AUTHOR de la tabla t).
+-- No exige que el marketplace completo tenga 2: Foundation puede tener publicaciones reales.
+SELECT pg_temp.as_system();
+DO $$
+DECLARE v_ids uuid[]; v_test_count bigint;
+BEGIN
+  SELECT array_agg(id) INTO v_ids FROM public.service_listings
+   WHERE profile_id = (SELECT pid FROM t WHERE label = 'AUTHOR');
+  IF coalesce(array_length(v_ids, 1), 0) <> 2 THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: se esperaban 2 publicaciones de prueba, hay %)', coalesce(array_length(v_ids, 1), 0);
+  END IF;
+  PERFORM pg_temp.as_user('EARLY'); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO v_test_count FROM public.get_opportunities_market(NULL, 100, 0) m
+   WHERE (m->>'id')::uuid = ANY (v_ids);
+  RESET ROLE;
+  IF v_test_count <> 2 THEN
+    RAISE EXCEPTION 'TEST R5-9d FALLÓ (Premium no ve las 2 publicaciones de prueba). EARLY ve % de 2', v_test_count;
+  END IF;
+END $$;
+SELECT pg_temp.as_system();
 
 -- R5-13. Premium solo abre publicaciones 'published'; dueño y participante no se rompen.
 SELECT pg_temp.as_system();
