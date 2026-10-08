@@ -61,7 +61,7 @@ export function isPremiumLocked(
     offers.some((o) => o.listingId === listing.id && o.fromProfileId === myProfileId)
   )
     return false;
-  if (contracts.some((c) => (c as { listingId?: string }).listingId === listing.id)) return false;
+  if (contracts.some((c) => c.listingId === listing.id)) return false;
   return true;
 }
 
