@@ -2918,3 +2918,14 @@ html[data-uv-perf="high"] .pf nav.pf-nav { translate: 0 0; }
 @media (max-width: 380px) { .pw-btn { padding: 0 1rem; font-size: .9rem; } }
 @media (min-width: 768px) { .opx-hero.opx-hero-compact .opx-hero-art { -webkit-mask-image: radial-gradient(closest-side, #000 72%, transparent 100%); mask-image: radial-gradient(closest-side, #000 72%, transparent 100%); } }
 @media (max-width: 767px) { .opx-hero.opx-hero-compact .opx-hero-art { -webkit-mask-image: linear-gradient(180deg, #000 75%, transparent); mask-image: linear-gradient(180deg, #000 75%, transparent); } .pw-universe-heads { gap: .4rem; } }
+
+/* Hero planet — restore large scale without top clipping, feathered into space. */
+@media (min-width: 1024px) {
+  .opx-hero.opx-hero-compact { min-height: 42rem; }
+  .opx-hero.opx-hero-compact .opx-hero-art { inset: 0 0 auto auto; width: auto; height: 100%; max-width: none; aspect-ratio: 1400 / 788; object-fit: cover; mask-image: radial-gradient(ellipse 34% 58% at 70% 48%, #000 62%, transparent 100%); }
+}
+@media (max-width: 767px) {
+  .opx-hero.opx-hero-compact .opx-hero-art { inset: 0 auto auto -76%; width: 180%; max-width: none; mask-image: radial-gradient(ellipse 26% 50% at 70% 47%, #000 62%, transparent 100%); }
+  .opx-hero.opx-hero-compact::after { background: linear-gradient(0deg, oklch(0.1 0.03 265) calc(100% - (100vw - 2.5rem) * .9), transparent calc(100% - (100vw - 2.5rem) * .6)); }
+  .opx-hero.opx-hero-compact .opx-hero-body { padding-top: calc((100vw - 2.5rem) * .98); }
+}
