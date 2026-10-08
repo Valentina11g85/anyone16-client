@@ -44,10 +44,37 @@ BEGIN
   INSERT INTO test_cat VALUES (v);
 END $cat$;
 
+-- Columnas obligatorias: se rellenan TODAS las que la app escribe siempre al publicar
+-- (src/lib/opportunities-repo.ts → toRow), con valores mínimos y válidos para COP.
+-- Comprobación previa: si Foundation tiene otra columna NOT NULL sin DEFAULT que este
+-- INSERT no cubre, se detiene con un mensaje que la nombra (sin insertar nada).
+DO $nn$
+DECLARE missing text;
+BEGIN
+  SELECT string_agg(column_name, ', ' ORDER BY ordinal_position) INTO missing
+    FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'service_listings'
+     AND is_nullable = 'NO' AND column_default IS NULL
+     AND is_identity = 'NO' AND is_generated = 'NEVER'
+     AND column_name NOT IN ('profile_id','listing_type','title','description','category_slug',
+       'price_amount','price_currency','price_type','availability','duration_minutes','modality',
+       'country_code','city','zone','service_radius_km','language_codes','photos','portfolio',
+       'status','is_demo','published_at');
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'PRECONDICIÓN TEST: service_listings exige columnas no cubiertas: %', missing;
+  END IF;
+END $nn$;
+
 WITH a AS (SELECT pid FROM t WHERE label = 'AUTHOR')
-INSERT INTO public.service_listings(profile_id, listing_type, title, description, status, is_demo, category_slug)
-SELECT a.pid, x.kind, 'TEST ' || x.kind, 'Detalle privado', 'published', false,
-       (SELECT slug FROM test_cat)
+INSERT INTO public.service_listings(
+  profile_id, listing_type, title, description, category_slug,
+  price_amount, price_currency, price_type, availability, duration_minutes, modality,
+  country_code, city, zone, service_radius_km, language_codes, photos, portfolio,
+  status, is_demo, published_at)
+SELECT a.pid, x.kind, 'TEST ' || x.kind, 'Detalle privado', (SELECT slug FROM test_cat),
+       50000, 'COP', 'service', '{"type":"all_week","note":"","duration":"60"}'::jsonb, 60, 'in_person',
+       'CO', 'Bogotá', 'Test', 5, ARRAY['es']::text[], ARRAY[]::text[], ARRAY[]::text[],
+       'published', false, now()
 FROM a, (VALUES ('offer'), ('request')) x(kind);
 UPDATE t SET lid = (SELECT id FROM public.service_listings
                     WHERE profile_id = (SELECT pid FROM t WHERE label = 'AUTHOR') AND listing_type = 'request');
