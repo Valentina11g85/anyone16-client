@@ -683,7 +683,7 @@ RESET ROLE;
 -- R5-11. Perfiles: profiles_select_own sigue existiendo y el SQL premium no añadió
 -- políticas en profiles; el nombre/foto del autor llegan solo por las RPC nuevas.
 DO $$
-DECLARE j jsonb;
+DECLARE j jsonb; v_lid uuid;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='profiles'
                   AND policyname='profiles_select_own')
@@ -691,12 +691,36 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='profiles'
               AND (policyname ILIKE '%premium%' OR policyname ILIKE 'opportunities_%'))
     THEN RAISE EXCEPTION 'TEST R5-11b FALLÓ (política premium en profiles)'; END IF;
+  -- R5-11c. Contrato real: get_opportunities_market(text, int, int) RETURNS SETOF jsonb;
+  -- cada fila = to_jsonb(listing) || {author_name, author_avatar_url}. jsonb_build_object
+  -- conserva las claves aunque el valor sea NULL, así que se comprueba la EXISTENCIA de las
+  -- claves, no su valor. El servicio original puede excluirse legítimamente para EARLY
+  -- (participa desde R5-7d), por eso se usa una publicación nueva e independiente del
+  -- AUTHOR, creada y retirada en este mismo bloque (además queda bajo el ROLLBACK final).
+  PERFORM pg_temp.as_system();
+  INSERT INTO public.service_listings(
+    profile_id, listing_type, title, description, category_slug,
+    price_amount, price_currency, price_type, availability, duration_minutes, modality,
+    country_code, city, zone, service_radius_km, language_codes, photos, portfolio,
+    status, is_demo, published_at)
+  SELECT (SELECT pid FROM t WHERE label='AUTHOR'), 'offer', 'TEST R5-11c offer', 'Detalle privado',
+         (SELECT slug FROM test_cat),
+         50000, 'COP', 'service', '{"type":"all_week","note":"","duration":"60"}'::jsonb, 60, 'in_person',
+         'CO', 'Bogotá', 'Test', 5, '["es"]'::jsonb, '[]'::jsonb, '[]'::jsonb,
+         'published', false, now()
+  RETURNING id INTO v_lid;
   PERFORM pg_temp.as_user('EARLY'); SET LOCAL ROLE authenticated;
   SELECT x INTO j FROM public.get_opportunities_market('offer', 100, 0) x
-   WHERE x->>'profile_id' = (SELECT pid FROM t WHERE label='AUTHOR')::text;
+   WHERE x->>'id' = v_lid::text;
   RESET ROLE;
-  IF j IS NULL OR NOT (j ? 'author_name') OR NOT (j ? 'author_avatar_url')
+  PERFORM pg_temp.as_system();
+  DELETE FROM public.service_listings WHERE id = v_lid;
+  IF j IS NULL
+    THEN RAISE EXCEPTION 'TEST R5-11c FALLÓ (EARLY Premium no recibe la publicación independiente)'; END IF;
+  IF NOT (j ? 'author_name') OR NOT (j ? 'author_avatar_url')
     THEN RAISE EXCEPTION 'TEST R5-11c FALLÓ (RPC sin author_name/author_avatar_url)'; END IF;
+  IF j->>'profile_id' IS DISTINCT FROM (SELECT pid FROM t WHERE label='AUTHOR')::text
+    THEN RAISE EXCEPTION 'TEST R5-11c FALLÓ (la fila no corresponde al AUTHOR)'; END IF;
 END $$;
 
 -- R7. Lectura DIRECTA de la tabla (no RPC) por usuarios sin Premium.
