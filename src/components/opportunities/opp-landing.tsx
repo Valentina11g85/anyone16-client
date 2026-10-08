@@ -60,7 +60,7 @@ export function OppHero({
           Encuentra oportunidades reales y conecta con las personas que necesitan lo que sabes hacer.
         </p>
         {access && access !== "loading" && (
-          <div className="pw-active !mt-4 !text-foreground">
+          <div className="pw-active !mt-4 flex-wrap !text-foreground">
             {access === "unlocked" ? (
               <>Acceso desbloqueado ✓</>
             ) : (
