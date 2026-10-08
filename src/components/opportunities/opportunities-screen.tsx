@@ -79,7 +79,7 @@ import { sceneVariant, serviceArt, tiltHandlers } from "@/lib/scene-art";
 import { ServiceEditor } from "./service-editor";
 import { OppHero, OppSkills, type Discover } from "./opp-landing";
 import { MarketColumns } from "./opp-market";
-import { LockedOpportunitiesExperience, LockedUniverse, UnlockSheet } from "./opp-paywall";
+import { LockedOpportunitiesExperience, LockedUniverse } from "./opp-paywall";
 import { useOpportunitiesAccess } from "@/lib/opportunities-access";
 import { PaymentOrderPanel } from "@/components/payments/payment-order-checkout";
 

@@ -261,7 +261,7 @@ export async function getMarketplaceListingById(id: string): Promise<ServiceList
   const row = (Array.isArray(data) ? data[0] : data) as ListingRow | undefined;
   if (!row || row.is_demo) return null;
   const [withAuthor] = await withAuthors([row]);
-  return fromRow(withAuthor);
+  return fromRow(withAuthor ?? row);
 }
 
 /** The caller's OWN listings ("Mis servicios" / "Mis solicitudes"); RLS lets authors read their rows. */
