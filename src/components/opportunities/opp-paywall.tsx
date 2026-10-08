@@ -30,18 +30,23 @@ export function LockedOpportunitiesExperience() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <section className="pw-galaxy" aria-label="Ofertas de trabajo bloqueadas">
+      <section className="pw-galaxy" aria-label="Oportunidades bloqueadas">
         <i className="pw-nebula" aria-hidden />
         <i className="pw-nebula pw-nebula-b" aria-hidden />
         <i className="pw-stars" aria-hidden />
         <i className="pw-stars pw-stars-b" aria-hidden />
+        <i className="pw-swirl" aria-hidden />
+        <i className="pw-orbit" aria-hidden />
+        <i className="pw-orbit pw-orbit-b" aria-hidden />
+        <i className="pw-particles" aria-hidden />
         <i className="pw-dust" aria-hidden />
         <div className="pw-glass">
           <span className="pw-lock"><Lock className="size-6" aria-hidden /></span>
           <h3 className="mt-4 font-display text-xl font-extrabold text-foreground sm:text-2xl">
-            Accede a todas las oportunidades
+            Accede a Oportunidades
           </h3>
-          <p className="mt-1 text-sm text-muted-foreground">Desbloquea el contenido completo de Ofertas de Trabajo.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Descubre servicios y ofertas de trabajo.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Un solo pago para tu cuenta.</p>
           <p className="pw-price mx-auto mt-4">{OPPORTUNITIES_UNLOCK_LABEL}</p>
           <button type="button" className="pw-btn mt-5 w-full sm:w-auto" onClick={() => setOpen(true)}>
             Desbloquear por $4.000
@@ -66,8 +71,8 @@ export function UnlockSheet({ onClose }: { onClose: () => void }) {
         </button>
         <div className="relative text-center">
           <span className="pw-lock mx-auto mt-3"><Lock className="size-6" aria-hidden /></span>
-          <p className="mt-4 font-display text-xl font-extrabold text-foreground">Accede a todas las oportunidades</p>
-          <p className="mt-1 text-sm text-muted-foreground">Desbloquea el contenido completo de Ofertas de Trabajo.</p>
+          <p className="mt-4 font-display text-xl font-extrabold text-foreground">Accede a Oportunidades</p>
+          <p className="mt-1 text-sm text-muted-foreground">Descubre servicios y ofertas de trabajo.</p>
           <p className="mt-1 text-sm text-muted-foreground">Un solo pago para tu cuenta.</p>
           <p className="pw-price mx-auto mt-4">{OPPORTUNITIES_UNLOCK_LABEL}</p>
           <button type="button" className="pw-btn mt-5 w-full" onClick={run} disabled={busy}>
@@ -77,5 +82,26 @@ export function UnlockSheet({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Locked marketplace: only the two market titles, then one continuous galaxy. */
+export function LockedUniverse() {
+  return (
+    <section className="pw-universe" aria-label="Mercado de Oportunidades">
+      <div className="pw-universe-heads">
+        <div className="pw-universe-head opx-red">
+          <h2 className="font-display text-xl font-extrabold uppercase tracking-tight text-foreground sm:text-2xl">
+            Servicios que se ofrecen
+          </h2>
+        </div>
+        <div className="pw-universe-head opx-blue">
+          <h2 className="font-display text-xl font-extrabold uppercase tracking-tight text-foreground sm:text-2xl">
+            Ofertas de trabajo
+          </h2>
+        </div>
+      </div>
+      <LockedOpportunitiesExperience />
+    </section>
   );
 }

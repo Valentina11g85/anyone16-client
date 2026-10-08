@@ -77,7 +77,7 @@ import { sceneVariant, serviceArt, tiltHandlers } from "@/lib/scene-art";
 import { ServiceEditor } from "./service-editor";
 import { OppHero, OppSkills, type Discover } from "./opp-landing";
 import { MarketColumns } from "./opp-market";
-import { LockedOpportunitiesExperience, UnlockSheet } from "./opp-paywall";
+import { LockedOpportunitiesExperience, LockedUniverse, UnlockSheet } from "./opp-paywall";
 import { isPremiumLocked, redactListing, useOpportunitiesAccess } from "@/lib/opportunities-access";
 import { PaymentOrderPanel } from "@/components/payments/payment-order-checkout";
 
@@ -188,11 +188,11 @@ export function OpportunitiesScreen({
       document.getElementById("opx-feed")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     );
   };
-  // Locked job offers are dropped entirely: nothing of them is rendered.
+  // Locked listings are dropped entirely: nothing of them is rendered.
   const feed = feedListings(opportunities)
     .map(gate)
     .filter((l) => !l.premiumLocked);
-  const seekLocked = access !== "unlocked";
+  const marketLocked = access !== "unlocked";
   const signedIn = Boolean(myProfileId);
 
   return (
@@ -225,15 +225,18 @@ export function OpportunitiesScreen({
 
       {view === "home" && (
         <>
-          <MarketColumns
-            seekLocked={seekLocked}
-            listings={feed}
-            signedIn={signedIn}
-            providerFor={providerFor}
-            onOpen={setOpenId}
-            onNew={startNew}
-            onSeeAll={(intent) => go(intent === "OFFER" ? "services" : "jobs")}
-          />
+          {marketLocked ? (
+            <LockedUniverse />
+          ) : (
+            <MarketColumns
+              listings={feed}
+              signedIn={signedIn}
+              providerFor={providerFor}
+              onOpen={setOpenId}
+              onNew={startNew}
+              onSeeAll={(intent) => go(intent === "OFFER" ? "services" : "jobs")}
+            />
+          )}
           <OppSkills onDiscover={discover} />
         </>
       )}
@@ -248,13 +251,8 @@ export function OpportunitiesScreen({
               ? "Personas que ofrecen sus habilidades, servicios y talentos."
               : "Personas que buscan a alguien para realizar un servicio."}
           </p>
-          {view === "jobs" && seekLocked ? (
-            <div className="mt-6">
-              <button type="button" className="opx-column-cta" disabled={!signedIn} onClick={() => startNew("SEEK")}>
-                <Plus className="size-4" /> Publicar lo que necesito
-              </button>
-              <div className="mt-5"><LockedOpportunitiesExperience /></div>
-            </div>
+          {marketLocked ? (
+            <div className="mt-6"><LockedOpportunitiesExperience /></div>
           ) : (
           <HireSide
             key={`${view}-${preset.nonce}`}

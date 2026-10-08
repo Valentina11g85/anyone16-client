@@ -1,5 +1,5 @@
 /**
- * Premium access to "Ofertas de trabajo" (SEEK listings) in Oportunidades.
+ * Premium access to the Oportunidades marketplace (services and job offers).
  *
  * Authorization lives in Foundation: the browser only ASKS whether the account
  * has access (RPC `get_my_opportunities_access`). Until that RPC exists (pending
@@ -46,7 +46,7 @@ export function useOpportunitiesAccess(profileId: string | null): OpportunitiesA
   return access;
 }
 
-/** A SEEK listing is premium unless it is mine or I already take part in it. */
+/** Every market listing is premium unless it is mine or I already take part in it. */
 export function isPremiumLocked(
   listing: ServiceListing,
   myProfileId: string | null,
@@ -54,7 +54,7 @@ export function isPremiumLocked(
   offers: ServiceOffer[],
   contracts: ServiceContract[],
 ): boolean {
-  if (listing.intent !== "SEEK" || access === "unlocked") return false;
+  if (access === "unlocked") return false;
   if (myProfileId && listing.authorProfileId === myProfileId) return false;
   if (
     myProfileId &&
