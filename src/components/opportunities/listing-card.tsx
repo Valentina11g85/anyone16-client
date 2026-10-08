@@ -38,9 +38,9 @@ function OpenListingCard({
   onOpen,
 }: {
   listing: ServiceListing;
-  provider?: WorkerProfile | null;
-  contractReview?: CardReview;
-  onOpen?: () => void;
+  provider?: WorkerProfile | null | undefined;
+  contractReview?: CardReview | undefined;
+  onOpen?: (() => void) | undefined;
 }) {
   const offering = listing.intent === "OFFER";
   const firstPhoto = useFirstPhoto(listing.photos);

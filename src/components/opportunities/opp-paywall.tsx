@@ -31,7 +31,7 @@ export function LockedListingCard({
   onOpen,
 }: {
   listing: ServiceListing;
-  onOpen?: () => void;
+  onOpen?: (() => void) | undefined;
 }) {
   return (
     <button type="button" onClick={onOpen} className="pw-card opx-blue text-left">
