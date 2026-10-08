@@ -80,8 +80,9 @@ DO $$ BEGIN
   IF pg_temp.visible_as('NOBODY')   <> 0 THEN RAISE EXCEPTION 'TEST 1/6 FALLÓ (sin acceso ve publicaciones)'; END IF;
   IF pg_temp.visible_as('PREMIUM')  <> 2 THEN RAISE EXCEPTION 'TEST 2 FALLÓ (con acceso no ve ambas)'; END IF;
   IF pg_temp.visible_as('AUTHOR')   <> 2 THEN RAISE EXCEPTION 'TEST 3 FALLÓ (autor no ve las suyas)'; END IF;
-  IF pg_temp.visible_as('PROPOSER') <> 1 THEN RAISE EXCEPTION 'TEST 4 FALLÓ (proponente: solo ESA publicación)'; END IF;
-  IF pg_temp.visible_as('HIRED')    <> 1 THEN RAISE EXCEPTION 'TEST 5 FALLÓ (contratado: solo ESA publicación)'; END IF;
+  -- Revisión 2: participantes NO leen la tabla directamente (solo vía get_service_listing_for_me).
+  IF pg_temp.visible_as('PROPOSER') <> 0 THEN RAISE EXCEPTION 'TEST 4 FALLÓ (proponente ve la tabla)'; END IF;
+  IF pg_temp.visible_as('HIRED')    <> 0 THEN RAISE EXCEPTION 'TEST 5 FALLÓ (contratado ve la tabla)'; END IF;
 END $$;
 
 -- 7/8. Por ID directo y paginando, sin acceso: 0 filas.
@@ -127,6 +128,68 @@ DO $$ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
 END $$;
 RESET ROLE;
+
+
+-- ===== Revisión 2: marketplace vs publicación participada =====
+CREATE OR REPLACE FUNCTION pg_temp.as_user(_label text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', (SELECT uid FROM t WHERE label = _label), 'role', 'authenticated')::text, true);
+END $$;
+CREATE OR REPLACE FUNCTION pg_temp.market_count(_label text) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint;
+BEGIN
+  PERFORM pg_temp.as_user(_label); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.get_opportunities_market(NULL, 100, 0) m
+   WHERE m.profile_id = (SELECT pid FROM t WHERE label='AUTHOR');
+  RESET ROLE; RETURN n;
+END $$;
+CREATE OR REPLACE FUNCTION pg_temp.detail_count(_label text, _kind text) RETURNS bigint LANGUAGE plpgsql AS $$
+DECLARE n bigint; lid uuid;
+BEGIN
+  SELECT id INTO lid FROM public.service_listings
+   WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR') AND listing_type = _kind;
+  PERFORM pg_temp.as_user(_label); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.get_service_listing_for_me(lid);
+  RESET ROLE; RETURN n;
+END $$;
+CREATE OR REPLACE FUNCTION pg_temp.can_media(_label text, _kind text) RETURNS boolean LANGUAGE plpgsql AS $$
+DECLARE r boolean; lid uuid;
+BEGIN
+  SELECT id INTO lid FROM public.service_listings
+   WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR') AND listing_type = _kind;
+  PERFORM pg_temp.as_user(_label); SET LOCAL ROLE authenticated;
+  r := public.can_view_service_listing(lid);
+  RESET ROLE; RETURN r;
+END $$;
+
+DO $$ BEGIN
+  -- 17. Marketplace sin pago: 0 publicaciones ajenas (aunque participe en una).
+  IF pg_temp.market_count('NOBODY')   <> 0 THEN RAISE EXCEPTION 'TEST 17a FALLÓ'; END IF;
+  IF pg_temp.market_count('PROPOSER') <> 0 THEN RAISE EXCEPTION 'TEST 17b FALLÓ (participación desbloqueó marketplace)'; END IF;
+  IF pg_temp.market_count('HIRED')    <> 0 THEN RAISE EXCEPTION 'TEST 17c FALLÓ (contratación desbloqueó marketplace)'; END IF;
+  -- 18. El autor sin pago no ve sus propias publicaciones como tarjetas del marketplace.
+  IF pg_temp.market_count('AUTHOR')   <> 0 THEN RAISE EXCEPTION 'TEST 18 FALLÓ'; END IF;
+  -- 19. Con pago: ve ambas (servicio + oferta de trabajo) con una sola compra.
+  IF pg_temp.market_count('PREMIUM')  <> 2 THEN RAISE EXCEPTION 'TEST 19 FALLÓ'; END IF;
+  -- 20. Participante abre ESA publicación concreta.
+  IF pg_temp.detail_count('PROPOSER','request') <> 1 THEN RAISE EXCEPTION 'TEST 20a FALLÓ'; END IF;
+  IF pg_temp.detail_count('HIRED','request')    <> 1 THEN RAISE EXCEPTION 'TEST 20b FALLÓ'; END IF;
+  -- 21. Bypass por UUID: participante pide OTRA publicación; ajeno pide cualquiera → 0.
+  IF pg_temp.detail_count('PROPOSER','offer')   <> 0 THEN RAISE EXCEPTION 'TEST 21a FALLÓ (otra publicación por UUID)'; END IF;
+  IF pg_temp.detail_count('NOBODY','request')   <> 0 THEN RAISE EXCEPTION 'TEST 21b FALLÓ (UUID sin relación)'; END IF;
+  IF pg_temp.detail_count('PREMIUM','offer')    <> 1 THEN RAISE EXCEPTION 'TEST 21c FALLÓ (premium por UUID)'; END IF;
+  -- 22. Imágenes: misma decisión que el detalle.
+  IF NOT pg_temp.can_media('HIRED','request')   THEN RAISE EXCEPTION 'TEST 22a FALLÓ (participante sin imágenes)'; END IF;
+  IF pg_temp.can_media('HIRED','offer')         THEN RAISE EXCEPTION 'TEST 22b FALLÓ (imágenes de otra publicación)'; END IF;
+  IF pg_temp.can_media('NOBODY','request')      THEN RAISE EXCEPTION 'TEST 22c FALLÓ (imágenes sin acceso)'; END IF;
+  -- 23. Revocación (reembolso): vuelve a 0 en marketplace.
+  PERFORM public.revoke_opportunities_access('test', 'pay-1', 'refund');
+  IF pg_temp.market_count('PREMIUM')  <> 0 THEN RAISE EXCEPTION 'TEST 23 FALLÓ'; END IF;
+  -- 24. Confirmación repetida tras revocación no reactiva por sí sola con el mismo pago.
+  IF public.activate_opportunities_access((SELECT pid FROM t WHERE label='PREMIUM'),
+       'test', 'pay-1', 4000, 'COP', 'confirmed', true) = 'activated' THEN RAISE EXCEPTION 'TEST 24 FALLÓ'; END IF;
+END $$;
 
 SELECT 'TODAS LAS PRUEBAS PASARON' AS resultado;
 ROLLBACK;
