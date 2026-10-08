@@ -2927,5 +2927,5 @@ html[data-uv-perf="high"] .pf nav.pf-nav { translate: 0 0; }
 @media (max-width: 767px) {
   .opx-hero.opx-hero-compact .opx-hero-art { inset: 0 auto auto -76%; width: 180%; max-width: none; mask-image: radial-gradient(ellipse 26% 50% at 70% 47%, #000 62%, transparent 100%); }
   .opx-hero.opx-hero-compact::after { background: linear-gradient(0deg, oklch(0.1 0.03 265) calc(100% - (100vw - 2.5rem) * .9), transparent calc(100% - (100vw - 2.5rem) * .6)); }
-  .opx-hero.opx-hero-compact .opx-hero-body { padding-top: calc((100vw - 2.5rem) * .92); }
+  .opx-hero.opx-hero-compact .opx-hero-body { padding-top: calc((100vw - 2.5rem) * .98); }
 }
