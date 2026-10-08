@@ -11,7 +11,6 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
-import { Route as TempCardTestRouteImport } from './routes/temp-card-test'
 import { Route as ApiPublicPaymentsMercadopagoWebhookRouteImport } from './routes/api/public/payments/mercadopago/webhook'
 
 const IndexRoute = IndexRouteImport.update({
@@ -24,11 +23,6 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
   path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TempCardTestRoute = TempCardTestRouteImport.update({
-  id: '/temp-card-test',
-  path: '/temp-card-test',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiPublicPaymentsMercadopagoWebhookRoute =
   ApiPublicPaymentsMercadopagoWebhookRouteImport.update({
     id: '/api/public/payments/mercadopago/webhook',
@@ -39,47 +33,35 @@ const ApiPublicPaymentsMercadopagoWebhookRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/temp-card-test': typeof TempCardTestRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/temp-card-test': typeof TempCardTestRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
-  '/temp-card-test': typeof TempCardTestRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
-    | '/reset-password'
-    | '/temp-card-test'
-    | '/api/public/payments/mercadopago/webhook'
+    '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/reset-password'
-    | '/temp-card-test'
-    | '/api/public/payments/mercadopago/webhook'
+  to: '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
   id:
     | '__root__'
     | '/'
     | '/reset-password'
-    | '/temp-card-test'
     | '/api/public/payments/mercadopago/webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
-  TempCardTestRoute: typeof TempCardTestRoute
   ApiPublicPaymentsMercadopagoWebhookRoute: typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 
@@ -99,13 +81,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/temp-card-test': {
-      id: '/temp-card-test'
-      path: '/temp-card-test'
-      fullPath: '/temp-card-test'
-      preLoaderRoute: typeof TempCardTestRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/public/payments/mercadopago/webhook': {
       id: '/api/public/payments/mercadopago/webhook'
       path: '/api/public/payments/mercadopago/webhook'
@@ -119,7 +94,6 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ResetPasswordRoute: ResetPasswordRoute,
-  TempCardTestRoute: TempCardTestRoute,
   ApiPublicPaymentsMercadopagoWebhookRoute:
     ApiPublicPaymentsMercadopagoWebhookRoute,
 }
