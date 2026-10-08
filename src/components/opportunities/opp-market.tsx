@@ -91,7 +91,7 @@ function Column({
 }) {
   const tone = intent === "OFFER" ? "opx-red" : "opx-blue";
   return (
-    <div className={`${tone} opx-column`}>
+    <div className={`${tone} opx-column ${intent === "SEEK" ? "order-first lg:order-none" : ""}`}>
       <header className="flex flex-col gap-3">
         <p className="opx-column-kicker">
           <span className="opx-dot" aria-hidden />
