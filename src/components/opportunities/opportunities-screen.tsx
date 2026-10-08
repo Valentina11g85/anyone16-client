@@ -59,6 +59,8 @@ import {
   cardReviewFor,
   setContractStatus,
   feedListings,
+  findListing,
+  loadListingById,
   offersForListing,
   sendServiceOffer,
   setListingStatus,
@@ -149,6 +151,19 @@ export function OpportunitiesScreen({
   // Every listing in the store was authorized by Foundation (market RPC, own rows
   // or the single-listing RPC); nothing is redacted or hidden client-side.
   const open = openId ? findListing(opportunities, openId) : null;
+  // Opening an id not loaded yet: ask Foundation for THAT listing only.
+  useEffect(() => {
+    if (!openId || open) return;
+    let active = true;
+    void loadListingById(openId).then((l) => {
+      if (!active || l) return;
+      setOpenId(null);
+      setFocusMissing(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [openId, open]);
 
   const startNew = (intent: ListingIntent) =>
     setEditing(
