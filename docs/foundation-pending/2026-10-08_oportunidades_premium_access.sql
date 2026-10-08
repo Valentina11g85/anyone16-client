@@ -29,6 +29,13 @@
 -- REQUISITO ANTES DE INSTALAR: el frontend debe leer el listado general con
 -- get_opportunities_market y los detalles ajenos con get_service_listing_for_me; si no,
 -- los participantes sin pago dejarán de ver publicaciones ajenas en sus flujos.
+-- REVISIÓN 3 (FINAL, tras diagnóstico real de Foundation):
+--   * NO modifica políticas de service_offers, service_messages ni profiles.
+--   * get_opportunities_market / get_service_listing_for_me devuelven la fila de la
+--     publicación + author_name + author_avatar_url (calculados aquí, solo si la
+--     publicación ya está autorizada). La RLS de profiles no se amplía.
+--   * Marketplace: published, is_demo=false, ajenas y NO participadas.
+--   * Activación: comprobación de duplicados corregida (sin depender de FOUND).
 -- =====================================================================================
 
 BEGIN;
@@ -170,22 +177,39 @@ CREATE POLICY service_listings_premium_gate_anon ON public.service_listings
   AS RESTRICTIVE FOR SELECT TO anon USING (false);
 
 -- 6b. MARKETPLACE: única fuente del listado general. Sin acceso (y sin ser admin)
--- devuelve 0 filas. Nunca incluye las publicaciones propias (esas viven en
--- "Mis servicios"/"Mis solicitudes"), ni las participadas.
-CREATE OR REPLACE FUNCTION public.get_opportunities_market(
+-- devuelve 0 filas. Solo published, is_demo=false, de OTROS perfiles y en las que el
+-- usuario NO participa (esas se abren con get_service_listing_for_me).
+-- Devuelve jsonb: columnas de service_listings + author_name + author_avatar_url.
+DROP FUNCTION IF EXISTS public.get_opportunities_market(text, int, int);
+CREATE FUNCTION public.get_opportunities_market(
   _listing_type text DEFAULT NULL, _limit int DEFAULT 50, _offset int DEFAULT 0)
-RETURNS SETOF public.service_listings
+RETURNS SETOF jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 DECLARE me uuid := public.current_profile_id();
 BEGIN
-  IF me IS NULL OR NOT (public.has_opportunities_access() OR public.is_platform_admin()) THEN
+  IF auth.uid() IS NULL OR me IS NULL
+     OR NOT (public.has_opportunities_access() OR public.is_platform_admin()) THEN
     RETURN;                                                   -- 0 filas → la UI muestra la galaxia
   END IF;
   RETURN QUERY
-    SELECT l.* FROM public.service_listings l
+    SELECT to_jsonb(l) || jsonb_build_object(
+             'author_name', p.full_name,
+             'author_avatar_url', p.avatar_url)
+      FROM public.service_listings l
+      LEFT JOIN public.profiles p ON p.id = l.profile_id
      WHERE l.status = 'published'
+       AND NOT coalesce(l.is_demo, false)
        AND l.profile_id <> me
        AND (_listing_type IS NULL OR l.listing_type = _listing_type)
+       AND NOT EXISTS (SELECT 1 FROM public.service_offers o
+                        WHERE o.service_listing_id = l.id
+                          AND me IN (o.buyer_profile_id, o.provider_profile_id, o.sender_profile_id))
+       AND NOT EXISTS (SELECT 1 FROM public.service_contracts c
+                        WHERE c.service_listing_id = l.id
+                          AND me IN (c.buyer_profile_id, c.provider_profile_id))
+       AND NOT EXISTS (SELECT 1 FROM public.service_messages m
+                        WHERE m.service_listing_id = l.id
+                          AND me IN (m.sender_profile_id, m.receiver_profile_id))
      ORDER BY l.created_at DESC
      LIMIT least(greatest(coalesce(_limit, 50), 1), 100)
      OFFSET greatest(coalesce(_offset, 0), 0);
@@ -210,14 +234,22 @@ GRANT EXECUTE ON FUNCTION public.can_view_service_listing(uuid) TO authenticated
 -- Devuelve como máximo UNA fila y solo si can_view_service_listing(id). Conocer el UUID
 -- no basta: sin pago y sin relación real → 0 filas (la UI trata 0 filas como "no
 -- disponible"). No acepta filtros ni listas: no sirve para descubrir.
-CREATE OR REPLACE FUNCTION public.get_service_listing_for_me(_listing_id uuid)
-RETURNS SETOF public.service_listings
+DROP FUNCTION IF EXISTS public.get_service_listing_for_me(uuid);
+CREATE FUNCTION public.get_service_listing_for_me(_listing_id uuid)
+RETURNS SETOF jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 BEGIN
-  IF NOT public.can_view_service_listing(_listing_id) THEN
+  IF auth.uid() IS NULL OR NOT public.can_view_service_listing(_listing_id) THEN
     RETURN;
   END IF;
-  RETURN QUERY SELECT l.* FROM public.service_listings l WHERE l.id = _listing_id LIMIT 1;
+  RETURN QUERY
+    SELECT to_jsonb(l) || jsonb_build_object(
+             'author_name', p.full_name,
+             'author_avatar_url', p.avatar_url)
+      FROM public.service_listings l
+      LEFT JOIN public.profiles p ON p.id = l.profile_id
+     WHERE l.id = _listing_id
+     LIMIT 1;
 END $$;
 REVOKE ALL ON FUNCTION public.get_service_listing_for_me(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_service_listing_for_me(uuid) TO authenticated;
@@ -273,7 +305,7 @@ CREATE OR REPLACE FUNCTION public.activate_opportunities_access(
   _profile_id uuid, _provider text, _external_payment_id text,
   _amount numeric, _currency text, _status text, _live_mode boolean)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE cfg public.opportunities_access_config; prev text; result text;
+DECLARE cfg public.opportunities_access_config; prev text; prev_status text; result text;
 BEGIN
   IF _profile_id IS NULL OR coalesce(_provider, '') = '' OR coalesce(_external_payment_id, '') = '' THEN
     RAISE EXCEPTION 'invalid_arguments';
@@ -281,23 +313,23 @@ BEGIN
   -- Serializa por cuenta: dos confirmaciones simultáneas no crean dos accesos.
   PERFORM pg_advisory_xact_lock(hashtextextended('opp_access:' || _profile_id::text, 0));
 
-  SELECT outcome INTO prev FROM public.opportunities_access_payments
-   WHERE payment_provider = _provider AND external_payment_id = _external_payment_id;
+  SELECT outcome, status INTO prev, prev_status FROM public.opportunities_access_payments
+   WHERE payment_provider = _provider AND external_payment_id = _external_payment_id
+   FOR UPDATE;
   -- Un pago ya reembolsado nunca vuelve a activar acceso (reenvíos tardíos del proveedor).
-  IF EXISTS (SELECT 1 FROM public.opportunities_access_payments
-             WHERE payment_provider = _provider AND external_payment_id = _external_payment_id
-               AND status = 'refunded') THEN
+  IF prev_status = 'refunded' THEN
     RETURN 'rejected_refunded';
   END IF;
-  IF FOUND AND _status = 'confirmed' AND prev IN ('activated', 'already_active') THEN
+  IF prev IS NOT NULL AND _status = 'confirmed' AND prev IN ('activated', 'already_active') THEN
     RETURN 'duplicate';                                     -- reintento del proveedor
   END IF;
 
   SELECT * INTO cfg FROM public.opportunities_access_config WHERE id;
   result := CASE
     WHEN _status <> 'confirmed' THEN 'recorded'
-    WHEN NOT _live_mode THEN 'rejected_test_mode'
-    WHEN upper(_currency) <> cfg.currency_code OR _amount < cfg.amount THEN 'rejected_amount'
+    WHEN cfg.amount IS NULL THEN 'rejected_no_config'
+    WHEN NOT coalesce(_live_mode, false) THEN 'rejected_test_mode'
+    WHEN upper(coalesce(_currency, '')) <> cfg.currency_code OR coalesce(_amount, 0) < cfg.amount THEN 'rejected_amount'
     WHEN EXISTS (SELECT 1 FROM public.opportunities_access
                  WHERE profile_id = _profile_id AND status = 'active') THEN 'already_active'
     ELSE 'activated' END;
@@ -332,6 +364,7 @@ CREATE OR REPLACE FUNCTION public.revoke_opportunities_access(
   _provider text, _external_payment_id text, _reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('opp_access_pay:' || coalesce(_provider,'') || ':' || coalesce(_external_payment_id,''), 0));
   UPDATE public.opportunities_access
      SET status = 'revoked', revoked_at = now(), revoke_reason = _reason, updated_at = now()
    WHERE payment_provider = _provider AND external_payment_id = _external_payment_id
