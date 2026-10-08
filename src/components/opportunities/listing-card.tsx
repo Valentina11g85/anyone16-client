@@ -10,7 +10,6 @@ import {
   type ServiceListing,
 } from "@/lib/opportunities-model";
 import { useFirstPhoto } from "./listing-media";
-import { LockedListingCard } from "./opp-paywall";
 
 export type CardReview = { label: string; rating: number } | null;
 
@@ -27,7 +26,6 @@ export function ListingCard({
   contractReview?: CardReview;
   onOpen?: () => void;
 }) {
-  if (listing.premiumLocked) return <LockedListingCard listing={listing} onOpen={onOpen} />;
   return <OpenListingCard listing={listing} provider={provider} contractReview={contractReview} onOpen={onOpen} />;
 }
 

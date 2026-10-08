@@ -8,6 +8,7 @@ import { ArrowRight, Briefcase, Plus, Search } from "lucide-react";
 import type { ListingIntent, ServiceListing } from "@/lib/opportunities-model";
 import type { WorkerProfile } from "@/lib/marketplace-model";
 import { ListingCard } from "./listing-card";
+import { LockedOpportunitiesExperience } from "./opp-paywall";
 
 const PREVIEW = 4;
 
@@ -18,7 +19,9 @@ export function MarketColumns({
   onOpen,
   onNew,
   onSeeAll,
+  seekLocked,
 }: {
+  seekLocked: boolean;
   listings: ServiceListing[];
   signedIn: boolean;
   providerFor: (l: ServiceListing) => WorkerProfile | null;
@@ -52,6 +55,7 @@ export function MarketColumns({
         seeAll="Ver todas las ofertas"
         empty="Aún no hay ofertas de trabajo publicadas."
         items={seeks}
+        locked={seekLocked}
         signedIn={signedIn}
         providerFor={providerFor}
         onOpen={onOpen}
@@ -75,7 +79,9 @@ function Column({
   onOpen,
   onNew,
   onSeeAll,
+  locked = false,
 }: {
+  locked?: boolean;
   intent: ListingIntent;
   title: string;
   subtitle: string;
@@ -112,7 +118,9 @@ function Column({
         {!signedIn && <p className="text-xs text-muted-foreground">Inicia sesión para publicar.</p>}
       </header>
 
-      {items.length === 0 ? (
+      {locked ? (
+        <div className="mt-5"><LockedOpportunitiesExperience /></div>
+      ) : items.length === 0 ? (
         <div className="mt-5 rounded-[22px] border border-dashed border-border p-8 text-center">
           {intent === "OFFER" ? (
             <Briefcase className="mx-auto size-7 text-primary" />
@@ -129,9 +137,11 @@ function Column({
         </div>
       )}
 
-      <button type="button" className="opx-column-more" onClick={() => onSeeAll(intent)}>
-        {seeAll} ({items.length}) <ArrowRight className="size-4" />
-      </button>
+      {!locked && (
+        <button type="button" className="opx-column-more" onClick={() => onSeeAll(intent)}>
+          {seeAll} ({items.length}) <ArrowRight className="size-4" />
+        </button>
+      )}
     </div>
   );
 }

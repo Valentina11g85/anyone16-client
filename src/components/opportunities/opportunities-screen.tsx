@@ -77,7 +77,7 @@ import { sceneVariant, serviceArt, tiltHandlers } from "@/lib/scene-art";
 import { ServiceEditor } from "./service-editor";
 import { OppHero, OppSkills, type Discover } from "./opp-landing";
 import { MarketColumns } from "./opp-market";
-import { PaywallSheet, PremiumAccessBanner } from "./opp-paywall";
+import { LockedOpportunitiesExperience, UnlockSheet } from "./opp-paywall";
 import { isPremiumLocked, redactListing, useOpportunitiesAccess } from "@/lib/opportunities-access";
 import { PaymentOrderPanel } from "@/components/payments/payment-order-checkout";
 
@@ -188,12 +188,16 @@ export function OpportunitiesScreen({
       document.getElementById("opx-feed")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     );
   };
-  const feed = feedListings(opportunities).map(gate);
+  // Locked job offers are dropped entirely: nothing of them is rendered.
+  const feed = feedListings(opportunities)
+    .map(gate)
+    .filter((l) => !l.premiumLocked);
+  const seekLocked = access !== "unlocked";
   const signedIn = Boolean(myProfileId);
 
   return (
     <section className="mx-auto w-full max-w-6xl overflow-x-clip px-5 pb-10 pt-6 sm:px-8">
-      <OppHero signedIn={signedIn} access={access} onOffer={() => startNew("OFFER")} onHire={() => startNew("SEEK")} />
+      <OppHero signedIn={signedIn} onOffer={() => startNew("OFFER")} onHire={() => startNew("SEEK")} />
 
       <nav id="opx-feed" className="opx-nav mt-6 scroll-mt-24" aria-label="Oportunidades">
         {NAV.map(([key, label]) => (
@@ -221,8 +225,8 @@ export function OpportunitiesScreen({
 
       {view === "home" && (
         <>
-          <PremiumAccessBanner access={access} />
           <MarketColumns
+            seekLocked={seekLocked}
             listings={feed}
             signedIn={signedIn}
             providerFor={providerFor}
@@ -244,7 +248,9 @@ export function OpportunitiesScreen({
               ? "Personas que ofrecen sus habilidades, servicios y talentos."
               : "Personas que buscan a alguien para realizar un servicio."}
           </p>
-          {view === "jobs" && <PremiumAccessBanner access={access} />}
+          {view === "jobs" && seekLocked ? (
+            <div className="mt-6"><LockedOpportunitiesExperience /></div>
+          ) : (
           <HireSide
             key={`${view}-${preset.nonce}`}
             intent={view === "services" ? "OFFER" : "SEEK"}
@@ -255,6 +261,7 @@ export function OpportunitiesScreen({
             onOpen={setOpenId}
             onNew={startNew}
           />
+          )}
         </div>
       )}
 
@@ -282,7 +289,7 @@ export function OpportunitiesScreen({
         ))}
 
       {open?.premiumLocked && (
-        <PaywallSheet listing={open} onClose={() => setOpenId(null)} />
+        <UnlockSheet listing={open} onClose={() => setOpenId(null)} />
       )}
       {open && !open.premiumLocked && (
         <ListingDetail
