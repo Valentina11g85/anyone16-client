@@ -598,10 +598,45 @@ SELECT pg_temp.as_system();
 SELECT pg_temp.as_system();
 UPDATE public.service_listings SET status = 'paused'
  WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR');
-DO $$ BEGIN
-  IF pg_temp.detail_count('EARLY','offer')   <> 0 THEN RAISE EXCEPTION 'TEST R5-13a FALLÓ (Premium abre pausada)'; END IF;
+DO $$
+DECLARE v_lid uuid; v_early uuid; v_early_part boolean;
+BEGIN
+  -- R5-13a. Contrato real (can_view_service_listing / get_service_listing_for_me):
+  --   participante real (oferta, contrato o mensaje) → ve la publicación en CUALQUIER estado;
+  --   Premium SIN participación → solo si status = 'published'.
+  -- EARLY puede haber quedado como participante del servicio en R5-7d (si la política
+  -- existente aceptó su propuesta). Por eso la expectativa depende de esa participación,
+  -- calculada como sistema con las mismas tablas que is_service_listing_participant().
+  PERFORM pg_temp.as_system();
+  SELECT id INTO v_lid FROM public.service_listings
+   WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR') AND listing_type = 'offer';
+  v_early := (SELECT pid FROM t WHERE label='EARLY');
+  v_early_part := EXISTS (SELECT 1 FROM public.service_offers o WHERE o.service_listing_id = v_lid
+                            AND v_early IN (o.buyer_profile_id, o.provider_profile_id, o.sender_profile_id))
+               OR EXISTS (SELECT 1 FROM public.service_contracts c WHERE c.service_listing_id = v_lid
+                            AND v_early IN (c.buyer_profile_id, c.provider_profile_id))
+               OR EXISTS (SELECT 1 FROM public.service_messages m WHERE m.service_listing_id = v_lid
+                            AND v_early IN (m.sender_profile_id, m.receiver_profile_id));
+  IF (SELECT status FROM public.service_listings WHERE id = v_lid) <> 'paused' THEN
+    RAISE EXCEPTION 'TEST R5-13a FALLÓ (precondición: el servicio no quedó pausado)';
+  END IF;
+  IF v_early_part THEN
+    IF pg_temp.detail_count('EARLY','offer') <> 1 THEN
+      RAISE EXCEPTION 'TEST R5-13a FALLÓ (EARLY participa en la pausada y la perdió)'; END IF;
+  ELSE
+    IF pg_temp.detail_count('EARLY','offer') <> 0 THEN
+      RAISE EXCEPTION 'TEST R5-13a FALLÓ (Premium sin participación abre pausada)'; END IF;
+  END IF;
+  RAISE NOTICE 'R5-13a: EARLY participante del servicio = %', v_early_part;
   IF pg_temp.visible_as('EARLY')             <> 0 THEN RAISE EXCEPTION 'TEST R5-13b FALLÓ (Premium lee pausadas en la tabla)'; END IF;
-  IF pg_temp.can_media('EARLY','offer')          THEN RAISE EXCEPTION 'TEST R5-13c FALLÓ (Premium ve fotos de pausada)'; END IF;
+  -- R5-13c. Fotos: misma regla que el detalle (can_view_service_listing).
+  IF v_early_part THEN
+    IF NOT pg_temp.can_media('EARLY','offer') THEN
+      RAISE EXCEPTION 'TEST R5-13c FALLÓ (EARLY participa en la pausada y perdió sus fotos)'; END IF;
+  ELSE
+    IF pg_temp.can_media('EARLY','offer') THEN
+      RAISE EXCEPTION 'TEST R5-13c FALLÓ (Premium sin participación ve fotos de pausada)'; END IF;
+  END IF;
   IF pg_temp.detail_count('HIRED','request') <> 1 THEN RAISE EXCEPTION 'TEST R5-13d FALLÓ (participante perdió su publicación)'; END IF;
   IF pg_temp.visible_as('AUTHOR')            <> 2 THEN RAISE EXCEPTION 'TEST R5-13e FALLÓ (dueño perdió sus publicaciones)'; END IF;
 END $$;
