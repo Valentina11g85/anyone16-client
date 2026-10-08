@@ -36,6 +36,10 @@
 --     publicación ya está autorizada). La RLS de profiles no se amplía.
 --   * Marketplace: published, is_demo=false, ajenas y NO participadas.
 --   * Activación: comprobación de duplicados corregida (sin depender de FOUND).
+-- REVISIÓN 4: reembolso antes de confirmación. revoke_opportunities_access registra el
+-- pago como 'refunded' aunque no exista fila previa, así una confirmación tardía del
+-- mismo (provider, external_payment_id) queda rechazada sin depender del orden de los
+-- webhooks. Un pago nuevo y distinto sí activa Premium.
 -- =====================================================================================
 
 BEGIN;
