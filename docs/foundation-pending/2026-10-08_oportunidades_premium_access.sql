@@ -49,6 +49,11 @@
 --     registra el intento con su profile_id real y outcome 'rejected_refunded'.
 --   * activate y revoke comparten el mismo bloqueo por pago (sin carreras).
 --   * get_opportunities_market_summary devuelve 0/0 sin Premium ni admin.
+-- REVISIÓN 6:
+--   * Premium solo concede acceso a publicaciones con status='published' (detalle,
+--     imágenes y lectura directa de la tabla). Dueño, participante real y admin igual.
+--   * activate_opportunities_access rechaza con 'rejected_invalid' (sin error técnico ni
+--     valores supuestos) avisos sin monto, moneda, modo o con estado desconocido.
 -- =====================================================================================
 
 BEGIN;
@@ -199,7 +204,7 @@ DROP POLICY IF EXISTS service_listings_premium_gate ON public.service_listings;
 CREATE POLICY service_listings_premium_gate ON public.service_listings
   AS RESTRICTIVE FOR SELECT TO authenticated
   USING (
-    public.has_opportunities_access()
+    (public.has_opportunities_access() AND status = 'published')
     OR public.is_platform_admin()
     OR profile_id = public.current_profile_id()
   );
@@ -249,14 +254,17 @@ REVOKE ALL ON FUNCTION public.get_opportunities_market(text, int, int) FROM PUBL
 GRANT EXECUTE ON FUNCTION public.get_opportunities_market(text, int, int) TO authenticated;
 
 -- 6c. Decisión única de "¿puedo ver ESTA publicación?" (detalle e imágenes).
--- Orden: acceso premium / admin → autor → participación real en ESA publicación.
+-- Admin → autor o participante real en ESA publicación (cualquier estado) → Premium
+-- (solo si la publicación está 'published'). El UUID por sí solo no concede nada.
 CREATE OR REPLACE FUNCTION public.can_view_service_listing(_listing_id uuid)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT public.current_profile_id() IS NOT NULL
      AND _listing_id IS NOT NULL
-     AND (public.has_opportunities_access()
-          OR public.is_platform_admin()
-          OR public.is_service_listing_participant(_listing_id));
+     AND (public.is_platform_admin()
+          OR public.is_service_listing_participant(_listing_id)
+          OR (public.has_opportunities_access()
+              AND EXISTS (SELECT 1 FROM public.service_listings l
+                           WHERE l.id = _listing_id AND l.status = 'published')));
 $$;
 REVOKE ALL ON FUNCTION public.can_view_service_listing(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.can_view_service_listing(uuid) TO authenticated;
@@ -341,6 +349,12 @@ BEGIN
   IF _profile_id IS NULL OR coalesce(_provider, '') = '' OR coalesce(_external_payment_id, '') = '' THEN
     RAISE EXCEPTION 'invalid_arguments';
   END IF;
+  -- Aviso incompleto o con estado desconocido: rechazo controlado, sin suponer valores
+  -- (nada de amount=4000, COP o live_mode=true por defecto) y sin crear acceso.
+  IF _amount IS NULL OR coalesce(_currency, '') = '' OR _live_mode IS NULL
+     OR _status IS NULL OR _status NOT IN ('pending', 'confirmed', 'failed', 'refunded') THEN
+    RETURN 'rejected_invalid';
+  END IF;
   -- Mismo bloqueo por pago que revoke_opportunities_access (siempre se toma PRIMERO,
   -- luego el de cuenta; revoke solo toma el de pago → sin interbloqueos).
   PERFORM pg_advisory_xact_lock(hashtextextended('opp_access_pay:' || _provider || ':' || _external_payment_id, 0));
@@ -353,8 +367,8 @@ BEGIN
               WHERE payment_provider = _provider AND external_payment_id = _external_payment_id) THEN
     INSERT INTO public.opportunities_access_payments
       (profile_id, payment_provider, external_payment_id, amount, currency_code, status, live_mode, outcome)
-    VALUES (_profile_id, _provider, _external_payment_id, coalesce(_amount, 0),
-            upper(coalesce(_currency, 'COP')), 'refunded', coalesce(_live_mode, false), 'rejected_refunded')
+    VALUES (_profile_id, _provider, _external_payment_id, _amount,
+            upper(_currency), 'refunded', _live_mode, 'rejected_refunded')
     ON CONFLICT (payment_provider, external_payment_id)
     DO UPDATE SET status = 'refunded', outcome = 'rejected_refunded', received_at = now();
     RETURN 'rejected_refunded';
