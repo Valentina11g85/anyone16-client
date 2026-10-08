@@ -237,7 +237,7 @@ export function OpportunitiesScreen({
               onSeeAll={(intent) => go(intent === "OFFER" ? "services" : "jobs")}
             />
           )}
-          <OppSkills onDiscover={discover} />
+          {!marketLocked && <OppSkills onDiscover={discover} />}
         </>
       )}
 
