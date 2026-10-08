@@ -36,6 +36,10 @@
 --     publicación ya está autorizada). La RLS de profiles no se amplía.
 --   * Marketplace: published, is_demo=false, ajenas y NO participadas.
 --   * Activación: comprobación de duplicados corregida (sin depender de FOUND).
+-- REVISIÓN 4: reembolso antes de confirmación. revoke_opportunities_access registra el
+-- pago como 'refunded' aunque no exista fila previa, así una confirmación tardía del
+-- mismo (provider, external_payment_id) queda rechazada sin depender del orden de los
+-- webhooks. Un pago nuevo y distinto sí activa Premium.
 -- =====================================================================================
 
 BEGIN;
@@ -360,17 +364,38 @@ GRANT EXECUTE ON FUNCTION public.activate_opportunities_access(uuid, text, text,
   TO service_role;
 
 -- Reembolso/contracargo: revoca (no borra). Solo servidor.
+-- Garantía de orden de webhooks: aunque el reembolso llegue ANTES que la confirmación,
+-- aquí se registra el pago como 'refunded' (fila marcadora si aún no existe). Una
+-- confirmación tardía del mismo (provider, external_payment_id) es rechazada por
+-- activate_opportunities_access (prev_status = 'refunded' → 'rejected_refunded'), sin
+-- importar el orden de llegada. Un pago NUEVO y distinto sí puede activar Premium.
 CREATE OR REPLACE FUNCTION public.revoke_opportunities_access(
   _provider text, _external_payment_id text, _reason text)
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE pay_profile uuid;
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtextextended('opp_access_pay:' || coalesce(_provider,'') || ':' || coalesce(_external_payment_id,''), 0));
+  IF coalesce(_provider, '') = '' OR coalesce(_external_payment_id, '') = '' THEN
+    RAISE EXCEPTION 'invalid_arguments';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('opp_access_pay:' || _provider || ':' || _external_payment_id, 0));
+  -- Perfil dueño del pago (si ya había fila de pago o de acceso).
+  SELECT coalesce(
+           (SELECT profile_id FROM public.opportunities_access_payments
+             WHERE payment_provider = _provider AND external_payment_id = _external_payment_id),
+           (SELECT profile_id FROM public.opportunities_access
+             WHERE payment_provider = _provider AND external_payment_id = _external_payment_id)
+         ) INTO pay_profile;
   UPDATE public.opportunities_access
      SET status = 'revoked', revoked_at = now(), revoke_reason = _reason, updated_at = now()
    WHERE payment_provider = _provider AND external_payment_id = _external_payment_id
      AND status = 'active';
-  UPDATE public.opportunities_access_payments SET status = 'refunded', received_at = now()
-   WHERE payment_provider = _provider AND external_payment_id = _external_payment_id;
+  -- Marca el pago como reembolsado aunque todavía no exista fila (reembolso temprano):
+  -- cualquier confirmación posterior del mismo pago queda rechazada para siempre.
+  INSERT INTO public.opportunities_access_payments
+    (profile_id, payment_provider, external_payment_id, amount, currency_code, status, live_mode, outcome)
+  VALUES (pay_profile, _provider, _external_payment_id, 0, 'COP', 'refunded', true, 'rejected_refunded')
+  ON CONFLICT (payment_provider, external_payment_id)
+  DO UPDATE SET status = 'refunded', outcome = 'rejected_refunded', received_at = now();
 END $$;
 REVOKE ALL ON FUNCTION public.revoke_opportunities_access(text, text, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.revoke_opportunities_access(text, text, text) TO service_role;
