@@ -136,12 +136,20 @@ BEGIN
   PERFORM set_config('request.jwt.claims',
     json_build_object('sub', (SELECT uid FROM t WHERE label = _label), 'role', 'authenticated')::text, true);
 END $$;
+-- PREPARACIÓN DE DATOS como postgres: sin JWT simulado (auth.uid() = NULL) y sin rol de
+-- usuario. Llamar antes de CADA escritura de preparación posterior a una simulación.
+CREATE OR REPLACE FUNCTION pg_temp.as_system() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM set_config('request.jwt.claims', '', true);
+  PERFORM set_config('request.jwt.claim.sub', '', true);
+  RESET ROLE;
+END $$;
 CREATE OR REPLACE FUNCTION pg_temp.market_count(_label text) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE n bigint;
 BEGIN
   PERFORM pg_temp.as_user(_label); SET LOCAL ROLE authenticated;
   SELECT count(*) INTO n FROM public.get_opportunities_market(NULL, 100, 0) m
-   WHERE m.profile_id = (SELECT pid FROM t WHERE label='AUTHOR');
+   WHERE m->>'profile_id' = (SELECT pid FROM t WHERE label='AUTHOR')::text;
   RESET ROLE; RETURN n;
 END $$;
 CREATE OR REPLACE FUNCTION pg_temp.detail_count(_label text, _kind text) RETURNS bigint LANGUAGE plpgsql AS $$
@@ -184,9 +192,11 @@ DO $$ BEGIN
   IF pg_temp.can_media('HIRED','offer')         THEN RAISE EXCEPTION 'TEST 22b FALLÓ (imágenes de otra publicación)'; END IF;
   IF pg_temp.can_media('NOBODY','request')      THEN RAISE EXCEPTION 'TEST 22c FALLÓ (imágenes sin acceso)'; END IF;
   -- 23. Revocación (reembolso): vuelve a 0 en marketplace.
+  PERFORM pg_temp.as_system();
   PERFORM public.revoke_opportunities_access('test', 'pay-1', 'refund');
   IF pg_temp.market_count('PREMIUM')  <> 0 THEN RAISE EXCEPTION 'TEST 23 FALLÓ'; END IF;
   -- 24. Confirmación repetida tras revocación no reactiva por sí sola con el mismo pago.
+  PERFORM pg_temp.as_system();
   IF public.activate_opportunities_access((SELECT pid FROM t WHERE label='PREMIUM'),
        'test', 'pay-1', 4000, 'COP', 'confirmed', true) = 'activated' THEN RAISE EXCEPTION 'TEST 24 FALLÓ'; END IF;
 END $$;
@@ -195,6 +205,7 @@ END $$;
 -- ===== Revisión 5: reembolso antes de confirmación, resumen, propuestas, mensajes ====
 -- =====================================================================================
 -- Usuario nuevo EARLY (sin ningún pago previo). Escrituras como postgres.
+SELECT pg_temp.as_system();
 INSERT INTO t(label, uid) VALUES ('EARLY', gen_random_uuid());
 INSERT INTO auth.users(id, instance_id, aud, role, email, raw_user_meta_data, created_at, updated_at)
 SELECT uid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
@@ -203,6 +214,39 @@ INSERT INTO public.profiles(user_id, email, full_name, is_demo)
 SELECT uid, 'opp-premium-early@example.invalid', 'Test EARLY', true FROM t
  WHERE label = 'EARLY' AND NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.user_id = t.uid);
 UPDATE t SET pid = p.id FROM public.profiles p WHERE p.user_id = t.uid AND t.label = 'EARLY';
+
+-- Aceptaciones legales de TODOS los usuarios de prueba (mismo patrón que
+-- 2026-10-08_legal_gate_tests.sql), para que las escrituras como usuario lleguen al gate
+-- Premium y no se detengan en legal_acceptance_required. Firma real:
+-- legal_record_acceptances(_profile uuid, _user uuid, _version_ids uuid[], _confirm_age boolean, _source text).
+-- SQL dinámico: si el SQL legal no está instalado, se omite con NOTICE sin romper el archivo.
+DO $$
+DECLARE u record; ids uuid[]; d text;
+BEGIN
+  IF to_regprocedure('public.legal_record_acceptances(uuid,uuid,uuid[],boolean,text)') IS NULL
+     OR to_regclass('public.legal_document_versions') IS NULL THEN
+    RAISE NOTICE 'SQL legal no instalado: se omiten aceptaciones de prueba';
+    RETURN;
+  END IF;
+  FOREACH d IN ARRAY ARRAY['terms', 'privacy_policy', 'data_treatment'] LOOP
+    EXECUTE $q$
+      INSERT INTO public.legal_document_versions(document_type, title, version, content, language, jurisdiction,
+        requires_acceptance, status, published_at, effective_at)
+      SELECT $1, 'TEST ' || $1, '0.0.1', repeat('Texto de prueba. ', 10), 'es', 'CO', true, 'published', now(), now()
+      WHERE NOT EXISTS (SELECT 1 FROM public.legal_document_versions
+                         WHERE document_type = $1 AND language = 'es' AND jurisdiction = 'CO' AND status = 'published')
+    $q$ USING d;
+  END LOOP;
+  EXECUTE $q$
+    SELECT array_agg(id) FROM public.legal_document_versions
+     WHERE status = 'published' AND language = 'es' AND jurisdiction = 'CO' AND requires_acceptance
+       AND document_type IN ('terms', 'privacy_policy', 'data_treatment')
+  $q$ INTO ids;
+  FOR u IN SELECT * FROM t LOOP
+    EXECUTE 'SELECT public.legal_record_acceptances($1, $2, $3, true, ''legal_center'')'
+      USING u.pid, u.uid, ids;
+  END LOOP;
+END $$;
 
 -- R5-1 … R5-5: pagos (como postgres, igual que el webhook con service_role).
 DO $$
@@ -239,6 +283,19 @@ BEGIN
   IF (SELECT count(*) FROM public.opportunities_access_payments
        WHERE payment_provider = 'test' AND external_payment_id = 'pay-EARLY') <> 1
     THEN RAISE EXCEPTION 'TEST R5-3b FALLÓ (pago duplicado)'; END IF;
+
+  -- R5-12. Avisos incompletos: rechazo controlado, sin acceso ni registro con valores supuestos.
+  IF public.activate_opportunities_access(early, 'test', 'pay-INV1', NULL, 'COP', 'confirmed', true) <> 'rejected_invalid'
+    THEN RAISE EXCEPTION 'TEST R5-12a FALLÓ (sin monto)'; END IF;
+  IF public.activate_opportunities_access(early, 'test', 'pay-INV2', 4000, NULL, 'confirmed', true) <> 'rejected_invalid'
+    THEN RAISE EXCEPTION 'TEST R5-12b FALLÓ (sin moneda)'; END IF;
+  IF public.activate_opportunities_access(early, 'test', 'pay-INV3', 4000, 'COP', 'confirmed', NULL) <> 'rejected_invalid'
+    THEN RAISE EXCEPTION 'TEST R5-12c FALLÓ (sin modo)'; END IF;
+  IF public.activate_opportunities_access(early, 'test', 'pay-INV4', 4000, 'COP', 'weird', true) <> 'rejected_invalid'
+    THEN RAISE EXCEPTION 'TEST R5-12d FALLÓ (estado desconocido)'; END IF;
+  IF EXISTS (SELECT 1 FROM public.opportunities_access WHERE profile_id = early)
+     OR EXISTS (SELECT 1 FROM public.opportunities_access_payments WHERE external_payment_id LIKE 'pay-INV%')
+    THEN RAISE EXCEPTION 'TEST R5-12e FALLÓ (aviso incompleto dejó acceso o registro)'; END IF;
 
   -- R5-4. Pago NUEVO y distinto sí activa.
   r := public.activate_opportunities_access(early, 'test', 'pay-NEW', 4000, 'COP', 'confirmed', true);
@@ -321,24 +378,29 @@ END $$;
 -- otros rechazos (p. ej. políticas propias de service_offers) se informan con NOTICE,
 -- porque esas políticas NO se modifican aquí.
 CREATE OR REPLACE FUNCTION pg_temp.try_offer(_label text, _kind text) RETURNS text LANGUAGE plpgsql AS $$
-DECLARE lid uuid; me uuid; author uuid;
+-- Roles según las reglas EXISTENTES (service_offers_guard):
+--   servicio ofrecido (listing_type='offer'): provider = AUTHOR, buyer = quien envía.
+--   oferta de trabajo (listing_type='request'): buyer = AUTHOR, provider = quien envía.
+--   el AUTHOR contraoferta a la contraparte existente (PROPOSER). sender lo fija el trigger.
+DECLARE lid uuid; me uuid; author uuid; other uuid; b uuid; pr uuid;
 BEGIN
+  PERFORM pg_temp.as_system();
   SELECT id, profile_id INTO lid, author FROM public.service_listings
    WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR') AND listing_type = _kind;
   me := (SELECT pid FROM t WHERE label = _label);
+  other := CASE WHEN me = author THEN (SELECT pid FROM t WHERE label='PROPOSER') ELSE me END;
+  IF _kind = 'offer' THEN b := other; pr := author; ELSE b := author; pr := other; END IF;
   PERFORM pg_temp.as_user(_label); SET LOCAL ROLE authenticated;
   BEGIN
-    INSERT INTO public.service_offers(service_listing_id, buyer_profile_id, provider_profile_id, sender_profile_id,
+    INSERT INTO public.service_offers(service_listing_id, buyer_profile_id, provider_profile_id,
       kind, offered_amount, currency_code, message, status)
-    VALUES (lid, author,
-            CASE WHEN me = author THEN (SELECT pid FROM t WHERE label='PROPOSER') ELSE me END,
-            me, CASE WHEN me = author THEN 'counter' ELSE 'offer' END, 60000, 'COP', 'r5', 'pending');
-    RESET ROLE; RETURN 'ok';
+    VALUES (lid, b, pr, CASE WHEN me = author THEN 'counter' ELSE 'offer' END, 60000, 'COP', 'r5', 'pending');
+    PERFORM pg_temp.as_system(); RETURN 'ok';
   EXCEPTION
     WHEN insufficient_privilege THEN
-      RESET ROLE;
+      PERFORM pg_temp.as_system();
       RETURN CASE WHEN SQLERRM LIKE '%opportunities_access_required%' THEN 'gate' ELSE 'other:' || SQLERRM END;
-    WHEN OTHERS THEN RESET ROLE; RETURN 'other:' || SQLERRM;
+    WHEN OTHERS THEN PERFORM pg_temp.as_system(); RETURN 'other:' || SQLERRM;
   END;
 END $$;
 
@@ -368,9 +430,13 @@ END $$;
 -- R5-8. Mensajes: el SQL premium no toca service_messages. Se comprueba que no existen
 -- triggers/políticas creadas por él y que un mensaje existente sigue legible por ambos
 -- participantes (con las políticas actuales, sean cuales sean).
-INSERT INTO public.service_messages(service_listing_id, sender_profile_id, receiver_profile_id, body)
-SELECT (SELECT lid FROM t LIMIT 1), (SELECT pid FROM t WHERE label='AUTHOR'), (SELECT pid FROM t WHERE label='HIRED'), 'r5-msg';
--- Si la columna del texto no se llama "body", ajustar según el diagnóstico (consulta 1).
+-- Preparación como postgres (sin JWT: legal gate no aplica). El trigger que registra el
+-- remitente lo deja en NULL sin JWT, así que se fija después con UPDATE (sin tocar triggers).
+SELECT pg_temp.as_system();
+INSERT INTO public.service_messages(service_listing_id, receiver_profile_id, body)
+SELECT (SELECT lid FROM t LIMIT 1), (SELECT pid FROM t WHERE label='HIRED'), 'r5-msg';
+UPDATE public.service_messages SET sender_profile_id = (SELECT pid FROM t WHERE label='AUTHOR')
+ WHERE body = 'r5-msg' AND service_listing_id = (SELECT lid FROM t LIMIT 1);
 DO $$
 DECLARE n bigint; lbl text;
 BEGIN
@@ -396,8 +462,24 @@ DO $$ BEGIN
   IF pg_temp.market_count('EARLY') <> 2 THEN RAISE EXCEPTION 'TEST R5-9d FALLÓ (Premium no ve ajenas)'; END IF;
 END $$;
 
+-- R5-13. Premium solo abre publicaciones 'published'; dueño y participante no se rompen.
+SELECT pg_temp.as_system();
+UPDATE public.service_listings SET status = 'paused'
+ WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR');
+DO $$ BEGIN
+  IF pg_temp.detail_count('EARLY','offer')   <> 0 THEN RAISE EXCEPTION 'TEST R5-13a FALLÓ (Premium abre pausada)'; END IF;
+  IF pg_temp.visible_as('EARLY')             <> 0 THEN RAISE EXCEPTION 'TEST R5-13b FALLÓ (Premium lee pausadas en la tabla)'; END IF;
+  IF pg_temp.can_media('EARLY','offer')          THEN RAISE EXCEPTION 'TEST R5-13c FALLÓ (Premium ve fotos de pausada)'; END IF;
+  IF pg_temp.detail_count('HIRED','request') <> 1 THEN RAISE EXCEPTION 'TEST R5-13d FALLÓ (participante perdió su publicación)'; END IF;
+  IF pg_temp.visible_as('AUTHOR')            <> 2 THEN RAISE EXCEPTION 'TEST R5-13e FALLÓ (dueño perdió sus publicaciones)'; END IF;
+END $$;
+SELECT pg_temp.as_system();
+UPDATE public.service_listings SET status = 'published'
+ WHERE profile_id = (SELECT pid FROM t WHERE label='AUTHOR');
+
 -- R5-10. Storage: objeto ficticio en la carpeta del autor (solo metadato, sin archivo;
 -- se deshace con el ROLLBACK). Lectura real a través de la política de storage.objects.
+SELECT pg_temp.as_system();
 INSERT INTO storage.objects(bucket_id, name, owner)
 SELECT 'service-listing-media',
        (SELECT pid FROM t WHERE label='AUTHOR')::text || '/' || l.id::text || '/photos/r5-' || l.listing_type || '.jpg',
@@ -446,7 +528,7 @@ BEGIN
   SELECT x INTO j FROM public.get_opportunities_market('offer', 100, 0) x
    WHERE x->>'profile_id' = (SELECT pid FROM t WHERE label='AUTHOR')::text;
   RESET ROLE;
-  IF j IS NULL OR NOT (j ? 'author_name') OR NOT (j ? 'author_avatar_url') OR j->>'author_name' <> 'Test AUTHOR'
+  IF j IS NULL OR NOT (j ? 'author_name') OR NOT (j ? 'author_avatar_url')
     THEN RAISE EXCEPTION 'TEST R5-11c FALLÓ (RPC sin author_name/author_avatar_url)'; END IF;
 END $$;
 

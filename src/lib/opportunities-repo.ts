@@ -63,6 +63,9 @@ type ListingRow = {
   created_at: string;
   updated_at: string;
   author?: { full_name?: string | null; avatar_url?: string | null } | null;
+  /** Only present in rows from get_opportunities_market / get_service_listing_for_me. */
+  author_name?: string | null;
+  author_avatar_url?: string | null;
 };
 
 type OfferRow = {
@@ -203,13 +206,16 @@ function mapOffers(rows: OfferRow[], listings: ServiceListing[]): ServiceOffer[]
     });
 }
 
-/** Adds author name/photo to rows returned by RPCs (they carry no profile join). */
-async function withAuthors(rows: ListingRow[]): Promise<ListingRow[]> {
-  const ids = [...new Set(rows.map((r) => r.profile_id).filter(Boolean))] as string[];
-  if (ids.length === 0) return rows;
-  const { data } = await db().from("profiles").select("id, full_name, avatar_url").in("id", ids);
-  const byId = new Map(((data ?? []) as Array<{ id: string; full_name: string | null; avatar_url: string | null }>).map((p) => [p.id, p]));
-  return rows.map((r) => ({ ...r, author: r.profile_id ? (byId.get(r.profile_id) ?? null) : null }));
+/**
+ * Author name/photo for rows returned by the premium RPCs. Foundation already
+ * authorised the row and includes author_name / author_avatar_url; no extra
+ * profiles query (its RLS would hide non-worker authors).
+ */
+function withAuthors(rows: ListingRow[]): ListingRow[] {
+  return rows.map((r) => ({
+    ...r,
+    author: { full_name: r.author_name ?? null, avatar_url: r.author_avatar_url ?? null },
+  }));
 }
 
 /**
@@ -245,7 +251,7 @@ export async function getMarketplaceListings(
   });
   if (error) return [];
   const rows = ((data ?? []) as ListingRow[]).filter((r) => !r.is_demo);
-  return (await withAuthors(rows)).map(fromRow);
+  return withAuthors(rows).map(fromRow);
 }
 
 /**
@@ -260,7 +266,7 @@ export async function getMarketplaceListingById(id: string): Promise<ServiceList
   if (error) return null;
   const row = (Array.isArray(data) ? data[0] : data) as ListingRow | undefined;
   if (!row || row.is_demo) return null;
-  const [withAuthor] = await withAuthors([row]);
+  const [withAuthor] = withAuthors([row]);
   return fromRow(withAuthor ?? row);
 }
 
