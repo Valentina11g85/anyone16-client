@@ -1149,8 +1149,11 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .opx-cta { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 3.25rem; padding: 0 1.5rem; border-radius: 999px; font-weight: 800; color: var(--primary-foreground); background: linear-gradient(100deg, var(--primary), var(--destructive)); box-shadow: 0 12px 34px -10px color-mix(in oklab, var(--destructive) 60%, transparent); transition: transform .3s, box-shadow .3s; }
 .opx-cta:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 18px 44px -10px color-mix(in oklab, var(--destructive) 75%, transparent); }
 .opx-cta:disabled { opacity: .55; cursor: not-allowed; }
-.opx-ghost { min-height: 3.25rem; padding: 0 1.5rem; border-radius: 999px; font-weight: 700; color: var(--foreground); background: color-mix(in oklab, var(--foreground) 6%, transparent); border: 1px solid color-mix(in oklab, var(--foreground) 14%, transparent); backdrop-filter: blur(12px); transition: background .3s; }
-.opx-ghost:hover { background: color-mix(in oklab, var(--foreground) 12%, transparent); }
+.opx-ghost { --opx-blue: oklch(0.6 0.22 256); --opx-blue-hi: oklch(0.7 0.18 245); display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 3.25rem; padding: 0 1.5rem; border-radius: 999px; font-weight: 800; cursor: pointer; color: oklch(0.99 0.004 256); background: linear-gradient(100deg, var(--opx-blue), var(--opx-blue-hi)); border: 1px solid color-mix(in oklab, var(--opx-blue-hi) 70%, oklch(1 0 0)); box-shadow: 0 12px 34px -10px color-mix(in oklab, var(--opx-blue) 65%, transparent), inset 0 1px 0 oklch(1 0 0 / .25); transition: transform .3s, box-shadow .3s, filter .2s; -webkit-tap-highlight-color: transparent; }
+.opx-ghost:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 18px 44px -10px color-mix(in oklab, var(--opx-blue) 80%, transparent), inset 0 1px 0 oklch(1 0 0 / .3); }
+.opx-ghost:active:not(:disabled) { transform: scale(.97); filter: brightness(.92); }
+.opx-ghost:focus-visible { outline: 2px solid var(--opx-blue-hi); outline-offset: 3px; }
+.opx-ghost:disabled { opacity: .55; cursor: not-allowed; }
 .opx-bridge { margin-top: 1.75rem; display: flex; align-items: center; gap: .75rem; font-size: .7rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--muted-foreground); }
 .opx-bridge i { flex: 1; max-width: 8rem; height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--primary), var(--destructive)); box-shadow: 0 0 12px var(--primary); }
 .opx-num { font-family: var(--font-display, inherit); font-size: .75rem; font-weight: 800; letter-spacing: .2em; color: var(--destructive); }
