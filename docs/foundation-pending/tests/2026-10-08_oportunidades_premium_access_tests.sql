@@ -525,6 +525,9 @@ BEGIN
     RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: se esperaban 2 publicaciones de prueba, hay %)', coalesce(array_length(v_ids, 1), 0);
   END IF;
   PERFORM pg_temp.as_user('EARLY'); SET LOCAL ROLE authenticated;
+  IF NOT coalesce((SELECT active FROM public.get_my_opportunities_access()), false) THEN
+    RESET ROLE; RAISE EXCEPTION 'TEST R5-9d FALLÓ (precondición: EARLY no tiene Premium)';
+  END IF;
   SELECT count(*) INTO v_test_count FROM public.get_opportunities_market(NULL, 100, 0) m
    WHERE (m->>'id')::uuid = ANY (v_ids);
   RESET ROLE;
