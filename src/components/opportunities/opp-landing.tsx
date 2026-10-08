@@ -1,3 +1,4 @@
+import { OPPORTUNITIES_UNLOCK_LABEL, type OpportunitiesAccess } from "@/lib/opportunities-access";
 /**
  * AnyOne¹⁶ — Oportunidades entry experience (presentation only).
  * Every action here calls existing handlers: start the existing ServiceEditor,
@@ -32,10 +33,12 @@ export type Discover = { group?: string; query?: string };
 
 export function OppHero({
   signedIn,
+  access,
   onOffer,
   onHire,
 }: {
   signedIn: boolean;
+  access?: OpportunitiesAccess;
   onOffer: () => void;
   onHire: () => void;
 }) {
@@ -53,6 +56,21 @@ export function OppHero({
           Ofrece tus servicios, encuentra nuevas oportunidades o encuentra a la persona adecuada
           para lo que necesitas.
         </p>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          Encuentra oportunidades reales y conecta con las personas que necesitan lo que sabes hacer.
+        </p>
+        {access && access !== "loading" && (
+          <div className="pw-active !mt-4 flex-wrap !text-foreground">
+            {access === "unlocked" ? (
+              <>Acceso desbloqueado ✓</>
+            ) : (
+              <>
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">Acceso a Oportunidades</span>
+                <span>Desbloquea el contenido completo · {OPPORTUNITIES_UNLOCK_LABEL}</span>
+              </>
+            )}
+          </div>
+        )}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           <button type="button" className="opx-cta" onClick={onOffer} disabled={!signedIn}>
             Ofrecer mi servicio <ArrowRight className="size-4" />

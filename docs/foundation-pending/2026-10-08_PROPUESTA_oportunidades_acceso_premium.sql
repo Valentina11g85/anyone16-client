@@ -1,0 +1,50 @@
+-- PROPUESTA — NO EJECUTAR TODAVÍA. Requiere revisión y aprobación del usuario.
+-- Acceso premium a "Ofertas de trabajo" (service_listings con intención SEEK).
+--
+-- Situación actual (comprobado en código):
+--   * El navegador lee service_listings con SELECT * → hoy la descripción, el autor,
+--     el presupuesto y la ubicación de las ofertas de trabajo llegan completos al
+--     navegador. El bloqueo visual NO es protección hasta aplicar este cambio.
+--   * payment_orders / payment_transactions (2026-09-29_payment_foundation.sql) están
+--     ligados a favor_id o service_contract_id; no hay producto, compra ni entitlement
+--     reutilizable para un desbloqueo de cuenta.
+--
+-- Cambio mínimo propuesto:
+--   1. Tabla service_access_entitlements (una fila por perfil, activada solo por
+--      service_role cuando el proveedor de pagos confirme el cobro).
+--   2. RPC get_my_opportunities_access() → { active boolean } (la usa el frontend).
+--   3. Restringir el SELECT de service_listings SEEK a: autor, participantes con
+--      oferta/contrato, o perfiles con entitlement activo.
+--   4. RPC get_job_offer_teasers() SECURITY DEFINER que devuelve solo
+--      id, category_code, title, created_at de SEEK publicadas para los demás.
+--   5. Reutilizar payment_orders añadiendo un tipo de orden 'opportunities_unlock'
+--      cuando se elija proveedor (pendiente: el proveedor aún no está definido).
+--
+-- Borrador orientativo (sin ejecutar):
+--
+-- CREATE TABLE public.service_access_entitlements (
+--   profile_id uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+--   active boolean NOT NULL DEFAULT false,
+--   amount numeric NOT NULL DEFAULT 4000,
+--   currency_code text NOT NULL DEFAULT 'COP',
+--   payment_order_id uuid REFERENCES public.payment_orders(id),
+--   provider text, provider_reference text,
+--   activated_at timestamptz, created_at timestamptz NOT NULL DEFAULT now()
+-- );
+-- ALTER TABLE public.service_access_entitlements ENABLE ROW LEVEL SECURITY;
+-- GRANT SELECT ON public.service_access_entitlements TO authenticated;
+-- GRANT ALL ON public.service_access_entitlements TO service_role;
+-- CREATE POLICY "own entitlement read" ON public.service_access_entitlements
+--   FOR SELECT TO authenticated USING (profile_id = public.current_profile_id());
+--   -- (sin INSERT/UPDATE para authenticated: solo service_role tras pago confirmado)
+--
+-- CREATE FUNCTION public.get_my_opportunities_access()
+-- RETURNS TABLE(active boolean) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+--   SELECT coalesce((SELECT e.active FROM service_access_entitlements e
+--                    WHERE e.profile_id = current_profile_id()), false);
+-- $$;
+-- REVOKE ALL ON FUNCTION public.get_my_opportunities_access() FROM PUBLIC, anon;
+-- GRANT EXECUTE ON FUNCTION public.get_my_opportunities_access() TO authenticated;
+--
+-- (Los pasos 3 y 4 requieren conocer las políticas actuales de service_listings
+--  instaladas en Foundation, que no son visibles desde el proyecto.)

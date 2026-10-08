@@ -10,6 +10,7 @@ import {
   type ServiceListing,
 } from "@/lib/opportunities-model";
 import { useFirstPhoto } from "./listing-media";
+import { LockedListingCard } from "./opp-paywall";
 
 export type CardReview = { label: string; rating: number } | null;
 
@@ -25,6 +26,21 @@ export function ListingCard({
   /** When given (even null), the card shows the review of ITS contract instead of author stats. */
   contractReview?: CardReview;
   onOpen?: () => void;
+}) {
+  if (listing.premiumLocked) return <LockedListingCard listing={listing} onOpen={onOpen} />;
+  return <OpenListingCard listing={listing} provider={provider} contractReview={contractReview} onOpen={onOpen} />;
+}
+
+function OpenListingCard({
+  listing,
+  provider,
+  contractReview,
+  onOpen,
+}: {
+  listing: ServiceListing;
+  provider?: WorkerProfile | null | undefined;
+  contractReview?: CardReview | undefined;
+  onOpen?: (() => void) | undefined;
 }) {
   const offering = listing.intent === "OFFER";
   const firstPhoto = useFirstPhoto(listing.photos);

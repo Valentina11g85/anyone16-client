@@ -55,6 +55,8 @@ export type ServiceListing = {
   updatedAt: string;
   /** Examples are flagged and never mixed with real data. */
   isDemo: boolean;
+  /** Set only on redacted teasers of premium job offers. */
+  premiumLocked?: boolean;
 };
 
 /** Negotiation on a listing — mirrors the existing favor offer shape. */

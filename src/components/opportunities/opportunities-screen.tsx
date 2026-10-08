@@ -77,6 +77,8 @@ import { sceneVariant, serviceArt, tiltHandlers } from "@/lib/scene-art";
 import { ServiceEditor } from "./service-editor";
 import { OppHero, OppSkills, type Discover } from "./opp-landing";
 import { MarketColumns } from "./opp-market";
+import { PaywallSheet, PremiumAccessBanner } from "./opp-paywall";
+import { isPremiumLocked, redactListing, useOpportunitiesAccess } from "@/lib/opportunities-access";
 import { PaymentOrderPanel } from "@/components/payments/payment-order-checkout";
 
 type View = "home" | "services" | "jobs" | "my-services" | "my-requests" | "contracts";
@@ -137,10 +139,16 @@ export function OpportunitiesScreen({
 
   const myProfileId = profile?.id ?? null;
   const mine = opportunities.listings.filter((l) => l.authorProfileId === myProfileId);
-  const open = openId
+  const access = useOpportunitiesAccess(myProfileId);
+  const gate = (l: ServiceListing) =>
+    isPremiumLocked(l, myProfileId, access, opportunities.offers, opportunities.contracts)
+      ? redactListing(l)
+      : l;
+  const openRaw = openId
     ? ([...opportunities.listings, ...feedListings(opportunities)].find((l) => l.id === openId) ??
       null)
     : null;
+  const open = openRaw ? gate(openRaw) : null;
 
   const startNew = (intent: ListingIntent) =>
     setEditing(
@@ -180,12 +188,12 @@ export function OpportunitiesScreen({
       document.getElementById("opx-feed")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     );
   };
-  const feed = feedListings(opportunities);
+  const feed = feedListings(opportunities).map(gate);
   const signedIn = Boolean(myProfileId);
 
   return (
     <section className="mx-auto w-full max-w-6xl overflow-x-clip px-5 pb-10 pt-6 sm:px-8">
-      <OppHero signedIn={signedIn} onOffer={() => startNew("OFFER")} onHire={() => startNew("SEEK")} />
+      <OppHero signedIn={signedIn} access={access} onOffer={() => startNew("OFFER")} onHire={() => startNew("SEEK")} />
 
       <nav id="opx-feed" className="opx-nav mt-6 scroll-mt-24" aria-label="Oportunidades">
         {NAV.map(([key, label]) => (
@@ -213,6 +221,7 @@ export function OpportunitiesScreen({
 
       {view === "home" && (
         <>
+          <PremiumAccessBanner access={access} />
           <MarketColumns
             listings={feed}
             signedIn={signedIn}
@@ -235,6 +244,7 @@ export function OpportunitiesScreen({
               ? "Personas que ofrecen sus habilidades, servicios y talentos."
               : "Personas que buscan a alguien para realizar un servicio."}
           </p>
+          {view === "jobs" && <PremiumAccessBanner access={access} />}
           <HireSide
             key={`${view}-${preset.nonce}`}
             intent={view === "services" ? "OFFER" : "SEEK"}
@@ -271,7 +281,10 @@ export function OpportunitiesScreen({
           </p>
         ))}
 
-      {open && (
+      {open?.premiumLocked && (
+        <PaywallSheet listing={open} onClose={() => setOpenId(null)} />
+      )}
+      {open && !open.premiumLocked && (
         <ListingDetail
           listing={open}
           provider={providerFor(open)}
