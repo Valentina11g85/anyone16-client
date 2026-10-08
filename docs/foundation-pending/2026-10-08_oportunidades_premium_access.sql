@@ -283,6 +283,12 @@ BEGIN
 
   SELECT outcome INTO prev FROM public.opportunities_access_payments
    WHERE payment_provider = _provider AND external_payment_id = _external_payment_id;
+  -- Un pago ya reembolsado nunca vuelve a activar acceso (reenvíos tardíos del proveedor).
+  IF EXISTS (SELECT 1 FROM public.opportunities_access_payments
+             WHERE payment_provider = _provider AND external_payment_id = _external_payment_id
+               AND status = 'refunded') THEN
+    RETURN 'rejected_refunded';
+  END IF;
   IF FOUND AND _status = 'confirmed' AND prev IN ('activated', 'already_active') THEN
     RETURN 'duplicate';                                     -- reintento del proveedor
   END IF;
