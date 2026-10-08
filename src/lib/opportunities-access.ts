@@ -23,15 +23,4 @@ export function useOpportunitiesAccess(): OpportunitiesAccess {
   return useOpportunities().access;
 }
 
-export type UnlockResult =
-  | { status: "redirect"; url: string }
-  | { status: "provider_pending" };
-
-/**
- * Provider-agnostic purchase entry point. It never grants access: the real
- * provider must create the order server-side and the entitlement is only
- * activated by Foundation after a confirmed payment. No provider is connected yet.
- */
-export async function startOpportunitiesUnlock(): Promise<UnlockResult> {
-  return { status: "provider_pending" };
-}
+// Purchase entry point: see src/lib/opportunities-payment.ts (never grants access).
