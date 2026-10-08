@@ -23,8 +23,12 @@
 --
 -- NO modifica: favors, offers, messages, payment_orders, payment_transactions,
 -- service_contracts, service_messages, service_reviews, sus políticas, ni datos existentes.
--- Las fotos quedan protegidas automáticamente: la política de storage
--- service_listing_media_select ya exige poder ver la publicación bajo RLS.
+-- REVISIÓN 2: marketplace (get_opportunities_market) separado de la publicación
+-- participada (get_service_listing_for_me). Reemplaza únicamente la política
+-- storage service_listing_media_select del bucket service-listing-media.
+-- REQUISITO ANTES DE INSTALAR: el frontend debe leer el listado general con
+-- get_opportunities_market y los detalles ajenos con get_service_listing_for_me; si no,
+-- los participantes sin pago dejarán de ver publicaciones ajenas en sus flujos.
 -- =====================================================================================
 
 BEGIN;
@@ -134,21 +138,108 @@ $$;
 REVOKE ALL ON FUNCTION public.is_service_listing_participant(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_service_listing_participant(uuid) TO authenticated;
 
+-- Autor real de una publicación a partir del segmento de ruta (texto). SECURITY DEFINER
+-- para que la política de storage no dependa de la RLS de la tabla. No expone contenido.
+CREATE OR REPLACE FUNCTION public.service_listings_media_owner(_listing_text text)
+RETURNS TABLE (listing_id uuid, profile_id uuid)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT l.id, l.profile_id FROM public.service_listings l
+   WHERE _listing_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     AND l.id = _listing_text::uuid;
+$$;
+REVOKE ALL ON FUNCTION public.service_listings_media_owner(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.service_listings_media_owner(text) TO authenticated;
+
 -- --------------------------------------------- 6. RESTRICTIVE policy on listings -----
--- Se suma (AND) a las políticas existentes. Autor, participante de ESA publicación,
--- cuenta con acceso activo o admin. Anónimos: nada.
+-- REVISIÓN 2 (separación marketplace / publicación participada):
+-- La tabla SOLO deja leer filas a: cuenta con acceso activo, administrador, o el AUTOR
+-- sobre SUS PROPIAS filas (necesario para editar/eliminar lo propio; no permite descubrir
+-- nada ajeno). Los PARTICIPANTES ya NO leen la tabla directamente: abren ESA publicación
+-- solo mediante get_service_listing_for_me(id). Así, sin pago, una consulta directa
+-- (listado, paginación o por UUID) nunca devuelve publicaciones ajenas.
 DROP POLICY IF EXISTS service_listings_premium_gate ON public.service_listings;
 CREATE POLICY service_listings_premium_gate ON public.service_listings
   AS RESTRICTIVE FOR SELECT TO authenticated
   USING (
-    profile_id = public.current_profile_id()
-    OR public.has_opportunities_access()
-    OR public.is_service_listing_participant(id)
+    public.has_opportunities_access()
     OR public.is_platform_admin()
+    OR profile_id = public.current_profile_id()
   );
 DROP POLICY IF EXISTS service_listings_premium_gate_anon ON public.service_listings;
 CREATE POLICY service_listings_premium_gate_anon ON public.service_listings
   AS RESTRICTIVE FOR SELECT TO anon USING (false);
+
+-- 6b. MARKETPLACE: única fuente del listado general. Sin acceso (y sin ser admin)
+-- devuelve 0 filas. Nunca incluye las publicaciones propias (esas viven en
+-- "Mis servicios"/"Mis solicitudes"), ni las participadas.
+CREATE OR REPLACE FUNCTION public.get_opportunities_market(
+  _listing_type text DEFAULT NULL, _limit int DEFAULT 50, _offset int DEFAULT 0)
+RETURNS SETOF public.service_listings
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+DECLARE me uuid := public.current_profile_id();
+BEGIN
+  IF me IS NULL OR NOT (public.has_opportunities_access() OR public.is_platform_admin()) THEN
+    RETURN;                                                   -- 0 filas → la UI muestra la galaxia
+  END IF;
+  RETURN QUERY
+    SELECT l.* FROM public.service_listings l
+     WHERE l.status = 'published'
+       AND l.profile_id <> me
+       AND (_listing_type IS NULL OR l.listing_type = _listing_type)
+     ORDER BY l.created_at DESC
+     LIMIT least(greatest(coalesce(_limit, 50), 1), 100)
+     OFFSET greatest(coalesce(_offset, 0), 0);
+END $$;
+REVOKE ALL ON FUNCTION public.get_opportunities_market(text, int, int) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_opportunities_market(text, int, int) TO authenticated;
+
+-- 6c. Decisión única de "¿puedo ver ESTA publicación?" (detalle e imágenes).
+-- Orden: acceso premium / admin → autor → participación real en ESA publicación.
+CREATE OR REPLACE FUNCTION public.can_view_service_listing(_listing_id uuid)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT public.current_profile_id() IS NOT NULL
+     AND _listing_id IS NOT NULL
+     AND (public.has_opportunities_access()
+          OR public.is_platform_admin()
+          OR public.is_service_listing_participant(_listing_id));
+$$;
+REVOKE ALL ON FUNCTION public.can_view_service_listing(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.can_view_service_listing(uuid) TO authenticated;
+
+-- 6d. PUBLICACIÓN CONCRETA (contratación, chat, notificación, propuesta, historial).
+-- Devuelve como máximo UNA fila y solo si can_view_service_listing(id). Conocer el UUID
+-- no basta: sin pago y sin relación real → 0 filas (la UI trata 0 filas como "no
+-- disponible"). No acepta filtros ni listas: no sirve para descubrir.
+CREATE OR REPLACE FUNCTION public.get_service_listing_for_me(_listing_id uuid)
+RETURNS SETOF public.service_listings
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF NOT public.can_view_service_listing(_listing_id) THEN
+    RETURN;
+  END IF;
+  RETURN QUERY SELECT l.* FROM public.service_listings l WHERE l.id = _listing_id LIMIT 1;
+END $$;
+REVOKE ALL ON FUNCTION public.get_service_listing_for_me(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.get_service_listing_for_me(uuid) TO authenticated;
+
+-- 6e. IMÁGENES. Reemplaza SOLO la política de lectura del bucket de Oportunidades
+-- (antes dependía de la RLS de la tabla, que ya no incluye a participantes). Ruta:
+-- <profile>/<listing>/<kind>/<file>. Lee: dueño de la carpeta, o quien pueda ver ESA
+-- publicación (premium/admin/participante) y la carpeta corresponde a su autor real.
+-- No toca insert/delete ni otros buckets.
+DROP POLICY IF EXISTS service_listing_media_select ON storage.objects;
+CREATE POLICY service_listing_media_select ON storage.objects FOR SELECT TO authenticated
+USING (
+  bucket_id = 'service-listing-media'
+  AND (
+    (storage.foldername(name))[1] = public.current_profile_id()::text
+    OR EXISTS (
+      SELECT 1 FROM public.service_listings_media_owner((storage.foldername(name))[2]) o
+      WHERE o.profile_id::text = (storage.foldername(name))[1]
+        AND public.can_view_service_listing(o.listing_id)
+    )
+  )
+);
 
 -- ------------------------------------------- 7. no new negotiation without access ----
 CREATE OR REPLACE FUNCTION public.opportunities_offer_access_guard()
