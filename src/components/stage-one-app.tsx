@@ -469,7 +469,7 @@ export function HomeScreen({
         className="fixed inset-x-0 bottom-0 z-30 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
         aria-label="Navegación principal"
       >
-        <div className="glass-nav mx-auto grid h-[72px] max-w-md grid-cols-4 rounded-[28px] px-2">
+        <div className="orb-nav mx-auto max-w-md">
           {(
             [
               ["home", Home, "Inicio"],
@@ -478,18 +478,25 @@ export function HomeScreen({
               ["profile", CircleUserRound, "Perfil"],
             ] as const
           ).map(([key, Icon, label]) => (
-            <Button
+            <button
               key={key}
-              variant={tab === key ? "navActive" : "nav"}
+              type="button"
+              data-world={key}
+              data-active={tab === key ? "" : undefined}
+              className="orb-nav-item"
               aria-current={tab === key ? "page" : undefined}
               onClick={() => {
                 setPublishedId(null);
                 setTab(key);
               }}
             >
-              <Icon />
-              <span>{label}</span>
-            </Button>
+              <span className="orb-nav-world" aria-hidden>
+                <span className="orb-nav-orbit" />
+                <span className="orb-nav-spark" />
+                <Icon className="orb-nav-icon" strokeWidth={1.8} />
+              </span>
+              <span className="orb-nav-label">{label}</span>
+            </button>
           ))}
         </div>
       </nav>
