@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as ZzPwPreviewRouteImport } from './routes/zz-pw-preview'
 import { Route as ApiPublicPaymentsMercadopagoWebhookRouteImport } from './routes/api/public/payments/mercadopago/webhook'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
   path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ZzPwPreviewRoute = ZzPwPreviewRouteImport.update({
+  id: '/zz-pw-preview',
+  path: '/zz-pw-preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicPaymentsMercadopagoWebhookRoute =
   ApiPublicPaymentsMercadopagoWebhookRouteImport.update({
     id: '/api/public/payments/mercadopago/webhook',
@@ -33,35 +39,47 @@ const ApiPublicPaymentsMercadopagoWebhookRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/zz-pw-preview': typeof ZzPwPreviewRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/zz-pw-preview': typeof ZzPwPreviewRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/zz-pw-preview': typeof ZzPwPreviewRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
+    | '/'
+    | '/reset-password'
+    | '/zz-pw-preview'
+    | '/api/public/payments/mercadopago/webhook'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
+  to:
+    | '/'
+    | '/reset-password'
+    | '/zz-pw-preview'
+    | '/api/public/payments/mercadopago/webhook'
   id:
     | '__root__'
     | '/'
     | '/reset-password'
+    | '/zz-pw-preview'
     | '/api/public/payments/mercadopago/webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ZzPwPreviewRoute: typeof ZzPwPreviewRoute
   ApiPublicPaymentsMercadopagoWebhookRoute: typeof ApiPublicPaymentsMercadopagoWebhookRoute
 }
 
@@ -81,6 +99,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/zz-pw-preview': {
+      id: '/zz-pw-preview'
+      path: '/zz-pw-preview'
+      fullPath: '/zz-pw-preview'
+      preLoaderRoute: typeof ZzPwPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/payments/mercadopago/webhook': {
       id: '/api/public/payments/mercadopago/webhook'
       path: '/api/public/payments/mercadopago/webhook'
@@ -94,6 +119,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ZzPwPreviewRoute: ZzPwPreviewRoute,
   ApiPublicPaymentsMercadopagoWebhookRoute:
     ApiPublicPaymentsMercadopagoWebhookRoute,
 }
