@@ -54,9 +54,40 @@
 --     imágenes y lectura directa de la tabla). Dueño, participante real y admin igual.
 --   * activate_opportunities_access rechaza con 'rejected_invalid' (sin error técnico ni
 --     valores supuestos) avisos sin monto, moneda, modo o con estado desconocido.
+-- REVISIÓN 7 (tras diagnóstico real confirmado el 2026-10-08):
+--   * Conflicto service_listings_select (permisiva: status='published' OR propia) se
+--     resuelve SIN reescribirla: la política RESTRICTIVA service_listings_premium_gate se
+--     combina con AND. Sin Premium: (published OR propia) AND (propia) = solo propias.
+--   * Precondiciones verificadas al inicio (aborta si no coinciden con el diagnóstico):
+--     RLS activa en service_listings, service_listings_select existe, bucket privado.
+--   * Verificación final dentro de la misma transacción: si la puerta restrictiva no
+--     quedó creada, o alguna vista pública lee service_listings sin security_invoker,
+--     aborta y no instala nada.
+--   * Funciones SECURITY DEFINER existentes (create_payment_order,
+--     service_earning_eligibility, service_offers_guard) no se tocan: no devuelven
+--     listados; service_offers_guard es trigger.
 -- =====================================================================================
 
 BEGIN;
+
+-- ------------------------------------------------------------ 0. precondiciones ------
+DO $pre$
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.service_listings'::regclass) THEN
+    RAISE EXCEPTION 'PRECONDICIÓN: RLS no está activa en service_listings';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public'
+                  AND tablename='service_listings' AND policyname='service_listings_select') THEN
+    RAISE EXCEPTION 'PRECONDICIÓN: falta service_listings_select (diagnóstico distinto)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM storage.buckets WHERE id='service-listing-media' AND public = false) THEN
+    RAISE EXCEPTION 'PRECONDICIÓN: bucket service-listing-media inexistente o público';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='current_profile_id' AND pronamespace='public'::regnamespace)
+     OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname='is_platform_admin' AND pronamespace='public'::regnamespace) THEN
+    RAISE EXCEPTION 'PRECONDICIÓN: faltan current_profile_id() o is_platform_admin()';
+  END IF;
+END $pre$;
 
 -- ------------------------------------------------------------------ 1. config --------
 CREATE TABLE IF NOT EXISTS public.opportunities_access_config (
@@ -476,5 +507,22 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.get_opportunities_market_summary() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.get_opportunities_market_summary() TO authenticated;
+
+-- ------------------------------------------------------ 99. verificación final -----
+DO $post$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='service_listings'
+                  AND policyname='service_listings_premium_gate' AND permissive='RESTRICTIVE'
+                  AND cmd='SELECT') THEN
+    RAISE EXCEPTION 'VERIFICACIÓN: la puerta restrictiva no quedó instalada';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_views v JOIN pg_class c ON c.relname=v.viewname
+               AND c.relnamespace='public'::regnamespace
+              WHERE v.schemaname='public' AND v.definition ILIKE '%service_listings%'
+                AND NOT coalesce('security_invoker=true' = ANY(c.reloptions), false)
+                AND has_table_privilege('authenticated', c.oid, 'SELECT')) THEN
+    RAISE EXCEPTION 'VERIFICACIÓN: existe una vista pública sobre service_listings que omite RLS';
+  END IF;
+END $post$;
 
 COMMIT;

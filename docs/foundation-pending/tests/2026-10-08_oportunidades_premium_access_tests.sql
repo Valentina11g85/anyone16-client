@@ -532,5 +532,47 @@ BEGIN
     THEN RAISE EXCEPTION 'TEST R5-11c FALLÓ (RPC sin author_name/author_avatar_url)'; END IF;
 END $$;
 
+-- R7. Lectura DIRECTA de la tabla (no RPC) por usuarios sin Premium.
+DO $$
+DECLARE n bigint;
+BEGIN
+  -- R7a. NOBODY: SELECT directo de todo lo publicado → 0 filas ajenas.
+  PERFORM pg_temp.as_user('NOBODY'); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.service_listings WHERE status='published';
+  RESET ROLE;
+  IF n <> 0 THEN RAISE EXCEPTION 'TEST R7a FALLÓ (SELECT directo sin Premium ve %)', n; END IF;
+  -- R7b. NOBODY: SELECT por UUID conocido → 0.
+  PERFORM pg_temp.as_user('NOBODY'); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.service_listings WHERE id=(SELECT lid FROM t WHERE label='AUTHOR');
+  RESET ROLE;
+  IF n <> 0 THEN RAISE EXCEPTION 'TEST R7b FALLÓ (UUID directo)'; END IF;
+  -- R7c. HIRED (participante): SELECT directo por UUID → 0; la RPC concreta → 1.
+  PERFORM pg_temp.as_user('HIRED'); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.service_listings WHERE id=(SELECT lid FROM t WHERE label='AUTHOR');
+  RESET ROLE;
+  IF n <> 0 THEN RAISE EXCEPTION 'TEST R7c FALLÓ (participante lee la tabla directa)'; END IF;
+  IF pg_temp.detail_count('HIRED','request') <> 1 THEN RAISE EXCEPTION 'TEST R7c2 FALLÓ'; END IF;
+  -- R7d. Participación no desbloquea el mercado.
+  IF pg_temp.market_count('HIRED') <> 0 OR pg_temp.market_count('PROPOSER') <> 0
+    THEN RAISE EXCEPTION 'TEST R7d FALLÓ (participante ve mercado)'; END IF;
+  -- R7e. NOBODY: mercado y resumen 0.
+  IF pg_temp.market_count('NOBODY') <> 0 THEN RAISE EXCEPTION 'TEST R7e FALLÓ'; END IF;
+  PERFORM pg_temp.as_user('NOBODY'); SET LOCAL ROLE authenticated;
+  SELECT count(*) INTO n FROM public.get_opportunities_market_summary() s
+   WHERE to_jsonb(s)::text ~ '"[a-z_]+": *[1-9]';
+  RESET ROLE;
+  IF n <> 0 THEN RAISE EXCEPTION 'TEST R7e2 FALLÓ (resumen sin Premium)'; END IF;
+  -- R7f. anon: nada.
+  SET LOCAL ROLE anon;
+  BEGIN
+    SELECT count(*) INTO n FROM public.service_listings;
+    IF n <> 0 THEN RESET ROLE; RAISE EXCEPTION 'TEST R7f FALLÓ (anon)'; END IF;
+  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+  RESET ROLE;
+  -- R7g. Dueño: sigue leyendo/gestionando lo suyo (Mis servicios / Mis solicitudes).
+  IF pg_temp.visible_as('AUTHOR') <> 2 THEN RAISE EXCEPTION 'TEST R7g FALLÓ'; END IF;
+END $$;
+SELECT pg_temp.as_system();
+
 SELECT 'TODAS LAS PRUEBAS PASARON' AS resultado;
 ROLLBACK;
