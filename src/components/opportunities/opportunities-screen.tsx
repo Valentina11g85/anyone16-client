@@ -78,7 +78,7 @@ import { ServiceEditor } from "./service-editor";
 import { OppHero, OppSkills, type Discover } from "./opp-landing";
 import { MarketColumns } from "./opp-market";
 import { LockedOpportunitiesExperience, LockedUniverse, UnlockSheet } from "./opp-paywall";
-import { isPremiumLocked, redactListing, useOpportunitiesAccess } from "@/lib/opportunities-access";
+import { useOpportunitiesAccess } from "@/lib/opportunities-access";
 import { PaymentOrderPanel } from "@/components/payments/payment-order-checkout";
 
 type View = "home" | "services" | "jobs" | "my-services" | "my-requests" | "contracts";
@@ -119,18 +119,24 @@ export function OpportunitiesScreen({
       ? opportunities.offers.find((o) => o.id === focus.offerId)?.listingId
       : undefined;
     const listingId = focus.listingId ?? viaOffer ?? null;
-    const found = listingId ? opportunities.listings.find((l) => l.id === listingId) : undefined;
-    if (found) {
-      setEditing(null);
-      setFocusMissing(false);
-      setFocusSection(focus.section);
-      setOpenId(found.id);
-      clearOpportunityFocus();
-    } else if (!opportunities.loading) {
+    if (opportunities.loading) return;
+    clearOpportunityFocus();
+    if (!listingId) {
       setFocusMissing(true);
-      clearOpportunityFocus();
+      return;
     }
-  }, [focus, opportunities.listings, opportunities.offers, opportunities.loading]);
+    // Only this concrete listing, through the single-listing RPC; never the market.
+    void loadListingById(listingId).then((found) => {
+      if (found) {
+        setEditing(null);
+        setFocusMissing(false);
+        setFocusSection(focus.section);
+        setOpenId(found.id);
+      } else {
+        setFocusMissing(true);
+      }
+    });
+  }, [focus, opportunities.offers, opportunities.loading]);
 
   const providerFor = (listing: ServiceListing): WorkerProfile | null =>
     (listing.authorProfileId &&
@@ -139,16 +145,10 @@ export function OpportunitiesScreen({
 
   const myProfileId = profile?.id ?? null;
   const mine = opportunities.listings.filter((l) => l.authorProfileId === myProfileId);
-  const access = useOpportunitiesAccess(myProfileId);
-  const gate = (l: ServiceListing) =>
-    isPremiumLocked(l, myProfileId, access, opportunities.offers, opportunities.contracts)
-      ? redactListing(l)
-      : l;
-  const openRaw = openId
-    ? ([...opportunities.listings, ...feedListings(opportunities)].find((l) => l.id === openId) ??
-      null)
-    : null;
-  const open = openRaw ? gate(openRaw) : null;
+  const access = useOpportunitiesAccess();
+  // Every listing in the store was authorized by Foundation (market RPC, own rows
+  // or the single-listing RPC); nothing is redacted or hidden client-side.
+  const open = openId ? findListing(opportunities, openId) : null;
 
   const startNew = (intent: ListingIntent) =>
     setEditing(
@@ -188,10 +188,8 @@ export function OpportunitiesScreen({
       document.getElementById("opx-feed")?.scrollIntoView({ behavior: "smooth", block: "start" }),
     );
   };
-  // Locked listings are dropped entirely: nothing of them is rendered.
-  const feed = feedListings(opportunities)
-    .map(gate)
-    .filter((l) => !l.premiumLocked);
+  // Market rows only exist when Foundation granted premium access.
+  const feed = feedListings(opportunities);
   const marketLocked = access !== "unlocked";
   const signedIn = Boolean(myProfileId);
 
@@ -291,10 +289,7 @@ export function OpportunitiesScreen({
           </p>
         ))}
 
-      {open?.premiumLocked && (
-        <UnlockSheet onClose={() => setOpenId(null)} />
-      )}
-      {open && !open.premiumLocked && (
+      {open && (
         <ListingDetail
           listing={open}
           provider={providerFor(open)}

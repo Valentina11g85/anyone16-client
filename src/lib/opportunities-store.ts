@@ -15,6 +15,10 @@ import type {
 import {
   DEMO_LISTINGS,
   ensureContract,
+  getMarketplaceListingById,
+  getMarketplaceListings,
+  getMyListings,
+  getMyOpportunitiesAccess,
   loadContracts,
   loadServiceReputation,
   loadServiceReviews,
@@ -203,11 +207,14 @@ export function useOpportunities() {
 
 export const refreshOpportunities = reload;
 
-/** Real published listings first, then clearly-flagged examples. */
-export const feedListings = (s: OpportunitiesState) => [
-  ...s.listings.filter((l) => l.status === "ACTIVE"),
-  ...DEMO_LISTINGS,
-];
+/**
+ * General marketplace feed: ONLY rows from the premium market RPC, then examples.
+ * Never built from own/related listings, so participation can't unlock it.
+ */
+export const feedListings = (s: OpportunitiesState) =>
+  s.access === "unlocked"
+    ? [...s.market.filter((l) => l.status === "ACTIVE"), ...DEMO_LISTINGS]
+    : [];
 
 export const findListing = (s: OpportunitiesState, id: string) =>
   s.listings.find((l) => l.id === id) ?? DEMO_LISTINGS.find((l) => l.id === id) ?? null;
