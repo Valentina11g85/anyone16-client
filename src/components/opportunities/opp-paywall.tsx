@@ -4,7 +4,7 @@ import { Check, Loader2, Lock, X } from "lucide-react";
 import { OPPORTUNITIES_UNLOCK_LABEL } from "@/lib/opportunities-access";
 import {
   clearCheckoutReturn,
-  isCheckoutReturn,
+  checkoutReturnKind,
   startOpportunitiesPremiumCheckout,
   waitForPremiumConfirmation,
 } from "@/lib/opportunities-payment";
@@ -14,7 +14,7 @@ import { refreshOpportunities } from "@/lib/opportunities-store";
  * Checkout phases. None of them grants access: "active"/"already" are shown only
  * after Foundation (get_my_opportunities_access) confirms it.
  */
-type Phase = "intro" | "preparing" | "not_configured" | "paying" | "confirming" | "active" | "already" | "error";
+type Phase = "intro" | "preparing" | "not_configured" | "paying" | "confirming" | "active" | "already" | "cancelled" | "error";
 
 const BENEFITS = [
   "Acceso a servicios que se ofrecen",
@@ -33,9 +33,10 @@ export function LockedOpportunitiesExperience() {
   const [initial, setInitial] = useState<Phase>("intro");
   // Returning from the provider: the URL is only a hint → open in "confirming".
   useEffect(() => {
-    if (isCheckoutReturn()) {
+    const kind = checkoutReturnKind();
+    if (kind) {
       clearCheckoutReturn();
-      setInitial("confirming");
+      setInitial(kind === "cancel" ? "cancelled" : "confirming");
       setOpen(true);
     }
   }, []);
@@ -87,7 +88,10 @@ export function UnlockSheet({ onClose, initialPhase = "intro" }: { onClose: () =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const starting = useRef(false);
   const start = async () => {
+    if (starting.current) return; // one session per click burst
+    starting.current = true;
     go("preparing");
     try {
       const r = await startOpportunitiesPremiumCheckout();
@@ -101,6 +105,8 @@ export function UnlockSheet({ onClose, initialPhase = "intro" }: { onClose: () =
       else go("error");
     } catch {
       go("error");
+    } finally {
+      starting.current = false;
     }
   };
 
@@ -170,6 +176,16 @@ export function UnlockSheet({ onClose, initialPhase = "intro" }: { onClose: () =
                 {phase === "active" ? "¡Oportunidades desbloqueado!" : "Ya tienes Oportunidades desbloqueado."}
               </p>
               <button type="button" className="pw-btn mt-6 w-full" onClick={onClose}>Ver Oportunidades</button>
+            </>
+          )}
+
+          {phase === "cancelled" && (
+            <>
+              <span className="pw-lock mx-auto mt-3"><Lock className="size-6" aria-hidden /></span>
+              <p className="mt-4 font-display text-xl font-extrabold text-foreground">Pago cancelado</p>
+              <p className="mt-2 text-sm text-muted-foreground">No se realizó ningún cobro. Puedes intentarlo cuando quieras.</p>
+              <button type="button" className="pw-btn mt-6 w-full" onClick={() => go("intro")}>Volver</button>
+              <button type="button" className="pw-ghost mt-2 w-full" onClick={onClose}>Cerrar</button>
             </>
           )}
 

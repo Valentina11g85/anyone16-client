@@ -12,6 +12,7 @@
  * URL params on return (e.g. ?opp_checkout=return) are only a UX hint to show
  * "confirmando"; they never unlock anything. Nothing is stored in the browser.
  */
+import { createOpportunitiesCheckout } from "./opportunities-checkout.functions";
 import { getMyOpportunitiesAccess } from "./opportunities-repo";
 import { refreshOpportunities } from "./opportunities-store";
 
@@ -34,22 +35,24 @@ export async function hasPremiumAccess(): Promise<boolean> {
 }
 
 /**
- * Starts the purchase. Today no provider is connected, so it returns
- * NOT_CONFIGURED. To connect the provider, replace ONLY the marked block with a
- * call to a server function that creates the checkout session and returns its URL.
+ * Starts the purchase through the server (Stripe Checkout). Returns NOT_CONFIGURED
+ * while the server has no Stripe test key; never grants access.
  */
 export async function startOpportunitiesPremiumCheckout(): Promise<PremiumCheckoutResult> {
   if (await hasPremiumAccess()) return { status: "ALREADY_ACTIVE" };
-  // ── Provider integration point ────────────────────────────────────────────
-  // const { url } = await createOpportunitiesCheckout(); // server-side, authenticated
-  // return { status: "REDIRECT", url };
-  return { status: "NOT_CONFIGURED" };
+  // Stripe Checkout Session, created server-side (identity + price decided there).
+  try {
+    return await createOpportunitiesCheckout();
+  } catch {
+    return { status: "ERROR", message: "No se pudo preparar el pago. Intenta de nuevo." };
+  }
 }
 
-/** True when the page was opened as the provider's return URL (hint only). */
-export function isCheckoutReturn(): boolean {
-  if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).has(CHECKOUT_RETURN_PARAM);
+/** Which provider return this page is, if any (hint only: "return" | "cancel"). */
+export function checkoutReturnKind(): "return" | "cancel" | null {
+  if (typeof window === "undefined") return null;
+  const v = new URLSearchParams(window.location.search).get(CHECKOUT_RETURN_PARAM);
+  return v === "cancel" ? "cancel" : v ? "return" : null;
 }
 
 /** Removes the return hint from the address bar without reloading. */
