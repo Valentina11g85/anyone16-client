@@ -121,3 +121,15 @@ export const RETURN_ORIGINS = [
 ];
 export const pickReturnOrigin = (origin: string | null | undefined) =>
   origin && RETURN_ORIGINS.includes(origin) ? origin : RETURN_ORIGINS[0]!;
+
+/**
+ * Decides whether a Stripe secret key may be used. Test keys are always allowed;
+ * live keys only when the operator explicitly sets STRIPE_LIVE_ENABLED="true".
+ * Anything else (missing/unknown prefix) is refused.
+ */
+export function stripeKeyAllowed(key: string | undefined, liveEnabled: string | undefined): boolean {
+  if (!key) return false;
+  if (key.startsWith("sk_test_") || key.startsWith("rk_test_")) return true;
+  if (key.startsWith("sk_live_") || key.startsWith("rk_live_")) return liveEnabled === "true";
+  return false;
+}
