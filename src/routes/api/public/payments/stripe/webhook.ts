@@ -6,6 +6,7 @@ import {
   PREMIUM_PRODUCT_TAG,
   STRIPE_PROVIDER,
   sessionToActivation,
+  stripeKeyAllowed,
   verifyStripeSignature,
   type StripeSession,
 } from "@/lib/stripe-premium";
@@ -66,6 +67,10 @@ export const Route = createFileRoute("/api/public/payments/stripe/webhook")({
         const serviceKey = process.env["FOUNDATION_SERVICE_ROLE_KEY"];
         if (!secret || !key || !serviceKey) {
           console.error("[stripe-webhook] missing configuration");
+          return new Response("not configured", { status: 503 });
+        }
+        if (!stripeKeyAllowed(key, process.env["STRIPE_LIVE_ENABLED"])) {
+          console.error("[stripe-webhook] Stripe key not allowed");
           return new Response("not configured", { status: 503 });
         }
 

@@ -8,7 +8,7 @@
  * - Already Premium → no session (no second charge).
  * - Idempotency-Key per account and 10-minute window → retries/double clicks
  *   reuse the same session.
- * - Test mode only: a live secret key is refused.
+ * - Live keys are refused unless STRIPE_LIVE_ENABLED="true" (explicit go-live).
  * - It NEVER grants access: only the signed webhook + Foundation do.
  */
 import { createMiddleware, createServerFn } from "@tanstack/react-start";
@@ -17,7 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { foundation } from "@/integrations/foundation/client";
 import { FOUNDATION_ANON_KEY, FOUNDATION_URL } from "@/integrations/foundation/config";
-import { PREMIUM_PRODUCT_TAG, pickReturnOrigin, toMinorUnits } from "./stripe-premium";
+import { PREMIUM_PRODUCT_TAG, pickReturnOrigin, stripeKeyAllowed, toMinorUnits } from "./stripe-premium";
 
 /** Attaches the FOUNDATION session token (accounts live in Foundation). */
 const attachFoundationAuth = createMiddleware({ type: "function" }).client(async ({ next }) => {
@@ -39,8 +39,8 @@ export const createOpportunitiesCheckout = createServerFn({ method: "POST" })
   .handler(async (): Promise<CheckoutServerResult> => {
     const stripeKey = process.env["STRIPE_SECRET_KEY"];
     if (!stripeKey) return { status: "NOT_CONFIGURED" };
-    if (!stripeKey.startsWith("sk_test_") && !stripeKey.startsWith("rk_test_")) {
-      console.error("[opp-checkout] refusing non-test Stripe key");
+    if (!stripeKeyAllowed(stripeKey, process.env["STRIPE_LIVE_ENABLED"])) {
+      console.error("[opp-checkout] Stripe key not allowed (live requires STRIPE_LIVE_ENABLED=true)");
       return { status: "NOT_CONFIGURED" };
     }
 

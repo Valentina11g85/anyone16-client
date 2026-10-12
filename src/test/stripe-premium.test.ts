@@ -82,3 +82,15 @@ describe("helpers", () => {
     expect(pickReturnOrigin("https://www.anyone16.com")).toBe("https://www.anyone16.com");
   });
 });
+
+import { stripeKeyAllowed } from "@/lib/stripe-premium";
+describe("stripeKeyAllowed", () => {
+  it("test keys always, live only with explicit flag", () => {
+    expect(stripeKeyAllowed("sk_test_x", undefined)).toBe(true);
+    expect(stripeKeyAllowed("sk_live_x", undefined)).toBe(false);
+    expect(stripeKeyAllowed("sk_live_x", "1")).toBe(false);
+    expect(stripeKeyAllowed("sk_live_x", "true")).toBe(true);
+    expect(stripeKeyAllowed("pk_live_x", "true")).toBe(false);
+    expect(stripeKeyAllowed(undefined, "true")).toBe(false);
+  });
+});
