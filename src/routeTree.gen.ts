@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ApiPublicPaymentsMercadopagoWebhookRouteImport } from './routes/api/public/payments/mercadopago/webhook'
+import { Route as ApiPublicPaymentsStripeWebhookRouteImport } from './routes/api/public/payments/stripe/webhook'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,40 +30,58 @@ const ApiPublicPaymentsMercadopagoWebhookRoute =
     path: '/api/public/payments/mercadopago/webhook',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicPaymentsStripeWebhookRoute =
+  ApiPublicPaymentsStripeWebhookRouteImport.update({
+    id: '/api/public/payments/stripe/webhook',
+    path: '/api/public/payments/stripe/webhook',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
+  '/api/public/payments/stripe/webhook': typeof ApiPublicPaymentsStripeWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
+  '/api/public/payments/stripe/webhook': typeof ApiPublicPaymentsStripeWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payments/mercadopago/webhook': typeof ApiPublicPaymentsMercadopagoWebhookRoute
+  '/api/public/payments/stripe/webhook': typeof ApiPublicPaymentsStripeWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
+    | '/'
+    | '/reset-password'
+    | '/api/public/payments/mercadopago/webhook'
+    | '/api/public/payments/stripe/webhook'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/reset-password' | '/api/public/payments/mercadopago/webhook'
+  to:
+    | '/'
+    | '/reset-password'
+    | '/api/public/payments/mercadopago/webhook'
+    | '/api/public/payments/stripe/webhook'
   id:
     | '__root__'
     | '/'
     | '/reset-password'
     | '/api/public/payments/mercadopago/webhook'
+    | '/api/public/payments/stripe/webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiPublicPaymentsMercadopagoWebhookRoute: typeof ApiPublicPaymentsMercadopagoWebhookRoute
+  ApiPublicPaymentsStripeWebhookRoute: typeof ApiPublicPaymentsStripeWebhookRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -88,6 +107,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicPaymentsMercadopagoWebhookRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/payments/stripe/webhook': {
+      id: '/api/public/payments/stripe/webhook'
+      path: '/api/public/payments/stripe/webhook'
+      fullPath: '/api/public/payments/stripe/webhook'
+      preLoaderRoute: typeof ApiPublicPaymentsStripeWebhookRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -96,6 +122,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   ApiPublicPaymentsMercadopagoWebhookRoute:
     ApiPublicPaymentsMercadopagoWebhookRoute,
+  ApiPublicPaymentsStripeWebhookRoute: ApiPublicPaymentsStripeWebhookRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
