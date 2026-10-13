@@ -63,20 +63,26 @@ export const Route = createFileRoute("/api/public/payments/stripe/webhook")({
       GET: async () => ok("stripe webhook ready"),
       POST: async ({ request }) => {
         const secret = process.env["STRIPE_WEBHOOK_SECRET"];
-        const key = process.env["STRIPE_SECRET_KEY"];
-        const serviceKey = process.env["FOUNDATION_SERVICE_ROLE_KEY"];
-        if (!secret || !key || !serviceKey) {
-          console.error("[stripe-webhook] missing configuration");
+        if (!secret) {
+          console.error("[stripe-webhook] missing webhook secret");
           return new Response("not configured", { status: 503 });
         }
-        if (!stripeKeyAllowed(key, process.env["STRIPE_LIVE_ENABLED"])) {
-          console.error("[stripe-webhook] Stripe key not allowed");
-          return new Response("not configured", { status: 503 });
-        }
-
+        // 1. Signature first, over the raw body (only Stripe can produce a valid one).
         const raw = await request.text();
         if (!(await verifyStripeSignature(raw, request.headers.get("stripe-signature"), secret))) {
           return new Response("invalid signature", { status: 400 });
+        }
+        // 2. Charges off (STRIPE_LIVE_ENABLED not "true" with a live key): acknowledge the
+        //    authentic event WITHOUT processing it — no Stripe re-read, no Foundation call.
+        const key = process.env["STRIPE_SECRET_KEY"];
+        if (!stripeKeyAllowed(key, process.env["STRIPE_LIVE_ENABLED"])) {
+          console.log("[stripe-webhook] signature valid; processing disabled");
+          return ok("signature valid; processing disabled");
+        }
+        const serviceKey = process.env["FOUNDATION_SERVICE_ROLE_KEY"];
+        if (!key || !serviceKey) {
+          console.error("[stripe-webhook] missing configuration");
+          return new Response("not configured", { status: 503 });
         }
         let event: { type?: string; data?: { object?: { id?: string; payment_intent?: string | null } } };
         try {
