@@ -117,7 +117,7 @@ export function NotificationsCenter({
     pushed.current = true;
     const onPop = () => {
       pushed.current = false;
-      close();
+      onOpenChange(false);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
