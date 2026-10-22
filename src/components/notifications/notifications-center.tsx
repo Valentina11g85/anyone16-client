@@ -117,7 +117,7 @@ export function NotificationsCenter({
     pushed.current = true;
     const onPop = () => {
       pushed.current = false;
-      onOpenChange(false);
+      close();
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -154,7 +154,7 @@ export function NotificationsCenter({
       return;
     }
     if (isFinanceType(n.type)) {
-      onOpenChange(false);
+      close();
       onNavigate("earnings");
       return;
     }
@@ -165,12 +165,12 @@ export function NotificationsCenter({
         offerId: n.relatedServiceOfferId,
         section: sectionForType(n.type),
       });
-      onOpenChange(false);
+      close();
       onNavigate("opportunities");
       return;
     }
     if (n.relatedFavorId || n.relatedOfferId) {
-      onOpenChange(false);
+      close();
       // Workers go to their own offers/active favor (tracking + chat), never the client's list.
       const favorId =
         n.relatedFavorId ?? marketplace.offers.find((o) => o.id === n.relatedOfferId)?.favorId ?? null;
