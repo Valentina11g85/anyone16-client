@@ -1654,6 +1654,10 @@ html[data-theme="light"] .fv-chip[data-active="true"] { background: color-mix(in
 
 /* ===== Notifications inbox (nt-*) ===== */
 .nt-sheet { overflow: hidden; }
+.nt-back { display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; margin-left: -0.4rem; border-radius: 999px; color: var(--foreground);
+  background: color-mix(in oklab, var(--foreground) 6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent); transition: all 200ms ease; }
+.nt-back:hover { background: color-mix(in oklab, var(--neon-blue) 14%, transparent); }
+.nt-back:active { transform: scale(0.94); }
 .nt-head { position: relative; flex: 0 0 auto; padding: 1.5rem 1.25rem 1rem; text-align: left; overflow: hidden; border-bottom: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
   background: linear-gradient(160deg, color-mix(in oklab, var(--neon-blue) 10%, var(--background)), var(--background) 60%); }
 .nt-head-glow { position: absolute; right: -3rem; top: -4rem; width: 12rem; height: 12rem; border-radius: 999px; filter: blur(30px); pointer-events: none;

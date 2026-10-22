@@ -1,9 +1,10 @@
 /**
  * Notifications center — list from Foundation, read/unread, open related context.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   Bell,
   Briefcase,
   CheckCheck,
@@ -38,6 +39,7 @@ import { getPaymentState, refreshPayments, usePayments } from "@/lib/payment-sto
 export type NotificationTarget = "favors" | "opportunities" | "worker-offers" | "earnings";
 
 const isFinanceType = (t: string) => t.startsWith("service_earning") || t.startsWith("service_withdrawal");
+const NOTIF_KEY = "anyNotifOpen";
 
 /** Keeps notifications fresh while signed in (reload + 30 s polling). */
 export function useNotificationsSync() {
@@ -101,6 +103,36 @@ export function NotificationsCenter({
     if (open) void loadNotifications(profile?.id ?? null);
   }, [open, profile?.id]);
 
+  // Back navigation: opening pushes one history entry so the device back button /
+  // swipe gesture closes the inbox instead of leaving the app. Reload or a
+  // direct "#notificaciones" link reopens it.
+  const pushed = useRef(false);
+  useEffect(() => {
+    if (history.state?.[NOTIF_KEY] || location.hash === "#notificaciones") onOpenChange(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    if (!history.state?.[NOTIF_KEY]) history.pushState({ ...(history.state ?? {}), [NOTIF_KEY]: true }, "");
+    pushed.current = true;
+    const onPop = () => {
+      pushed.current = false;
+      onOpenChange(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [open, onOpenChange]);
+
+  const close = () => {
+    if (pushed.current && history.state?.[NOTIF_KEY]) {
+      pushed.current = false;
+      history.back(); // popstate listener closes the sheet
+      return;
+    }
+    if (location.hash === "#notificaciones") history.replaceState(history.state, "", location.pathname + location.search);
+    onOpenChange(false);
+  };
+
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const markRead = (n: AppNotification) => {
@@ -149,11 +181,16 @@ export function NotificationsCenter({
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={(o) => (o ? onOpenChange(true) : close())}>
       <SheetContent side="right" className="nt-sheet flex w-full flex-col gap-0 p-0 sm:max-w-lg">
         <SheetHeader className="nt-head">
           <span className="nt-head-glow" aria-hidden="true" />
-          <p className="eyebrow relative text-[11px] font-bold uppercase">Centro de actividad</p>
+          <div className="relative flex items-center gap-2">
+            <button type="button" aria-label="Volver" className="nt-back" onClick={close}>
+              <ArrowLeft className="size-5" aria-hidden="true" />
+            </button>
+            <p className="eyebrow text-[11px] font-bold uppercase">Centro de actividad</p>
+          </div>
           <div className="relative flex items-end justify-between gap-3">
             <SheetTitle className="font-display text-2xl font-extrabold tracking-tight">Notificaciones</SheetTitle>
             {unread > 0 && (
